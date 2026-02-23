@@ -583,12 +583,8 @@ export function Itinerary({ trip, store }: ItineraryProps) {
       <TripSettings
         open={showSettings}
         trip={trip}
-        settings={store.state.settings}
         onClose={() => setShowSettings(false)}
         onUpdate={(updates) => store.updateTrip(trip.id, updates)}
-        theme={store.state.settings.theme}
-        onThemeChange={store.setTheme}
-        onUpdateSettings={store.updateSettings}
       />
 
       {/* Move-to Modal */}

@@ -7,11 +7,11 @@ import { MapView } from './components/MapView';
 import { BudgetView } from './components/BudgetView';
 import { SplitView } from './components/SplitView';
 import { PrintView } from './components/PrintView';
-import { ImportExport } from './components/ImportExport';
+import { SettingsView } from './components/SettingsView';
 import { useTheme } from './hooks/useTheme';
-import { Map as MapIcon, CalendarDays, DollarSign, Printer, FolderDown, MapPin, Users } from 'lucide-react';
+import { Map as MapIcon, CalendarDays, DollarSign, MapPin, Users, Settings as SettingsIcon } from 'lucide-react';
 
-type Tab = 'trips' | 'itinerary' | 'map' | 'budget' | 'split' | 'print' | 'io';
+type Tab = 'trips' | 'itinerary' | 'map' | 'budget' | 'split' | 'settings';
 
 export function App() {
   const store = useTripStore();
@@ -59,8 +59,7 @@ export function App() {
           <SidebarButton icon={<MapPin size={16} />} label="Map" active={tab === 'map'} onClick={() => setTab('map')} />
           <SidebarButton icon={<DollarSign size={16} />} label="Budget" active={tab === 'budget'} onClick={() => setTab('budget')} />
           <SidebarButton icon={<Users size={16} />} label="Split" active={tab === 'split'} onClick={() => setTab('split')} />
-          <SidebarButton icon={<Printer size={16} />} label="Print" onClick={() => setShowPrint(true)} />
-          <SidebarButton icon={<FolderDown size={16} />} label="Import/Export" active={tab === 'io'} onClick={() => setTab('io')} />
+          <SidebarButton icon={<SettingsIcon size={16} />} label="Settings" active={tab === 'settings'} onClick={() => setTab('settings')} />
         </div>
       </aside>
 
@@ -124,8 +123,8 @@ export function App() {
             Select a trip to manage split expenses
           </div>
         )}
-        {tab === 'io' && (
-          <ImportExport store={store} />
+        {tab === 'settings' && (
+          <SettingsView store={store} onOpenPrint={() => setShowPrint(true)} />
         )}
       </main>
 
@@ -136,8 +135,7 @@ export function App() {
         <MobileTab icon={<MapPin size={20} />} label="Map" active={tab === 'map'} onClick={() => setTab('map')} />
         <MobileTab icon={<DollarSign size={20} />} label="Budget" active={tab === 'budget'} onClick={() => setTab('budget')} />
         <MobileTab icon={<Users size={20} />} label="Split" active={tab === 'split'} onClick={() => setTab('split')} />
-        <MobileTab icon={<Printer size={20} />} label="Print" active={false} onClick={() => setShowPrint(true)} />
-        <MobileTab icon={<FolderDown size={20} />} label="I/O" active={tab === 'io'} onClick={() => setTab('io')} />
+        <MobileTab icon={<SettingsIcon size={20} />} label="Settings" active={tab === 'settings'} onClick={() => setTab('settings')} />
       </nav>
 
       <ToastContainer />

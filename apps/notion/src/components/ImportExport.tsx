@@ -11,6 +11,7 @@ interface ImportExportProps {
     exportData: (tripIds?: string[]) => string;
     importData: (json: string) => number;
   };
+  embedded?: boolean;
 }
 
 function collectAttachmentIds(state: AppState): string[] {
@@ -36,7 +37,7 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function ImportExport({ store }: ImportExportProps) {
+export function ImportExport({ store, embedded = false }: ImportExportProps) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleExportJson = () => {
@@ -138,8 +139,8 @@ export function ImportExport({ store }: ImportExportProps) {
   };
 
   return (
-    <div className="max-w-lg mx-auto px-4 py-8">
-      <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-6">Import / Export</h2>
+    <div className={embedded ? 'w-full' : 'max-w-lg mx-auto px-4 py-8'}>
+      {!embedded && <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-6">Import / Export</h2>}
 
       <div className="flex flex-col gap-4">
         <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
