@@ -1,15 +1,29 @@
-import type { VersionedSchema, AppState } from './types';
+import type { VersionedSchema, AppState, AppSettings, Template } from './types';
+import { builtInTemplates } from './templates';
 
 const STORAGE_KEY = 'trip_planner_v1';
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
+
+// ── Default settings ──
+
+export function defaultSettings(): AppSettings {
+  return { theme: 'system' };
+}
 
 // ── Migrations ──
 // Each migration transforms from version N to N+1
 type Migration = (data: unknown) => unknown;
 
 const migrations: Record<number, Migration> = {
-  // Example: migration from v1 -> v2 would go here
-  // 1: (data) => { ... return transformedData; }
+  // v1 → v2: add templates[] and settings to AppState
+  1: (data: unknown) => {
+    const d = data as { trips: unknown[]; activeTripId: string | null };
+    return {
+      ...d,
+      templates: builtInTemplates(),
+      settings: defaultSettings(),
+    };
+  },
 };
 
 function applyMigrations(stored: { version: number; data: unknown }): AppState {
@@ -30,6 +44,8 @@ export function defaultState(): AppState {
   return {
     trips: [],
     activeTripId: null,
+    templates: builtInTemplates(),
+    settings: defaultSettings(),
   };
 }
 

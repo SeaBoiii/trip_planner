@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useCallback, useSyncExternalStore } from 'react';
-import type { AppState, Trip, Day, Item } from './types';
+import type { AppState, Trip, Day, Item, Template, ThemePreference, AppSettings } from './types';
 import { loadState, saveState, exportTrips, importTrips } from './storage';
 import * as ops from './store';
 
@@ -87,6 +87,32 @@ export function useTripStore() {
     dispatch((s) => ops.moveItem(s, tripId, dayIdFrom, dayIdTo, itemId, newIndex));
   }, [dispatch]);
 
+  const reorderItems = useCallback((tripId: string, dayId: string, itemIds: string[]) => {
+    dispatch((s) => ops.reorderItems(s, tripId, dayId, itemIds));
+  }, [dispatch]);
+
+  // Template actions
+  const saveAsTemplate = useCallback((tripId: string, templateName: string, description: string) => {
+    dispatch((s) => ops.saveAsTemplate(s, tripId, templateName, description));
+  }, [dispatch]);
+
+  const deleteTemplate = useCallback((templateId: string) => {
+    dispatch((s) => ops.deleteTemplate(s, templateId));
+  }, [dispatch]);
+
+  const createTripFromTemplate = useCallback((template: Template, tripName: string) => {
+    dispatch((s) => ops.createTripFromTemplate(s, template, tripName));
+  }, [dispatch]);
+
+  // Settings actions
+  const setTheme = useCallback((theme: ThemePreference) => {
+    dispatch((s) => ops.setTheme(s, theme));
+  }, [dispatch]);
+
+  const updateSettings = useCallback((updates: Partial<AppSettings>) => {
+    dispatch((s) => ops.updateSettings(s, updates));
+  }, [dispatch]);
+
   // Export / Import
   const exportData = useCallback((tripIds?: string[]) => {
     return exportTrips(getState(), tripIds);
@@ -122,11 +148,17 @@ export function useTripStore() {
     updateItem,
     deleteItem,
     moveItem,
+    reorderItems,
+    saveAsTemplate,
+    deleteTemplate,
+    createTripFromTemplate,
+    setTheme,
+    updateSettings,
     exportData,
     importData,
   };
 }
 
 // Re-export types and utilities for convenience
-export type { AppState, Trip, Day, Item } from './types';
+export type { AppState, Trip, Day, Item, Template, ThemePreference, AppSettings } from './types';
 export type { VersionedSchema } from './types';

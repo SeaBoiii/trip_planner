@@ -13,10 +13,13 @@ body {
 /* Print styles */
 @media print {
   .no-print { display: none !important; }
-  body { background: white; }
+  body { background: white; color: black; }
 }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+
+/* Dark scrollbar */
+.dark ::-webkit-scrollbar-thumb { background: #4b5563; }

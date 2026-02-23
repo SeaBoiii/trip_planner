@@ -1,6 +1,6 @@
-import { deepClone } from './utils';
+import { deepClone, nanoid } from './utils';
 import { createNewTrip, createNewDay, createNewItem } from './factories';
-import type { AppState, Trip, Day, Item } from './types';
+import type { AppState, Trip, Day, Item, Template, ThemePreference, AppSettings } from './types';
 
 // ── Trip Operations ──
 
@@ -150,6 +150,71 @@ export function moveItem(
 
     return { ...trip, days, updatedAt: new Date().toISOString() };
   });
+}
+
+export function reorderItems(state: AppState, tripId: string, dayId: string, itemIds: string[]): AppState {
+  return mapDay(state, tripId, dayId, (day) => {
+    const itemMap = new Map(day.items.map((it) => [it.id, it]));
+    const reordered = itemIds.map((id) => itemMap.get(id)).filter(Boolean) as Item[];
+    return { ...day, items: reordered };
+  });
+}
+
+// ── Template Operations ──
+
+export function saveAsTemplate(state: AppState, tripId: string, templateName: string, description: string): AppState {
+  const trip = state.trips.find((t) => t.id === tripId);
+  if (!trip) return state;
+  const template: Template = {
+    id: nanoid(),
+    name: templateName,
+    description,
+    builtIn: false,
+    currency: trip.currency,
+    days: trip.days.map((d) => ({
+      label: d.label,
+      items: d.items.map(({ title, time, location, notes, cost, tags, link }) => ({
+        title, time, location, notes, cost, tags, link,
+      })),
+    })),
+    createdAt: new Date().toISOString(),
+  };
+  return { ...state, templates: [...state.templates, template] };
+}
+
+export function deleteTemplate(state: AppState, templateId: string): AppState {
+  return { ...state, templates: state.templates.filter((t) => t.id !== templateId || t.builtIn) };
+}
+
+export function createTripFromTemplate(state: AppState, template: Template, tripName: string): AppState {
+  const trip = createNewTrip(tripName, template.currency);
+  trip.days = template.days.map((dt) => {
+    const day = createNewDay(dt.label);
+    day.items = dt.items.map((it) => createNewItem(it.title, {
+      time: it.time,
+      location: it.location,
+      notes: it.notes,
+      cost: it.cost,
+      tags: it.tags ?? [],
+      link: it.link,
+    }));
+    return day;
+  });
+  return {
+    ...state,
+    trips: [...state.trips, trip],
+    activeTripId: trip.id,
+  };
+}
+
+// ── Settings Operations ──
+
+export function updateSettings(state: AppState, updates: Partial<AppSettings>): AppState {
+  return { ...state, settings: { ...state.settings, ...updates } };
+}
+
+export function setTheme(state: AppState, theme: ThemePreference): AppState {
+  return updateSettings(state, { theme });
 }
 
 // ── Helpers ──

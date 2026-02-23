@@ -32,63 +32,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Notion variant
-        run: pnpm build:notion
-
-      - name: Build Cards variant
-        run: pnpm build:cards
-
-      - name: Prepare Pages output
-        run: |
-          mkdir -p dist
-          # Create root index that redirects to variant picker
-          cat > dist/index.html << 'EOF'
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Trip Planner</title>
-            <style>
-              * { margin: 0; padding: 0; box-sizing: border-box; }
-              body { min-height: 100vh; display: flex; align-items: center; justify-content: center; font-family: Inter, system-ui, sans-serif; background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0fdf4 100%); }
-              .container { text-align: center; padding: 2rem; }
-              h1 { font-size: 2rem; font-weight: 800; color: #1e3a5f; margin-bottom: 0.5rem; }
-              p { color: #64748b; margin-bottom: 2rem; }
-              .cards { display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center; }
-              .card { display: block; width: 280px; padding: 2rem; border-radius: 1.25rem; text-decoration: none; transition: all 0.2s; border: 2px solid transparent; }
-              .card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0,0,0,0.1); }
-              .card-a { background: white; border-color: #e2e8f0; color: #1e293b; }
-              .card-a:hover { border-color: #3b82f6; }
-              .card-b { background: linear-gradient(135deg, #0ea5e9, #6366f1); color: white; }
-              .card-b:hover { opacity: 0.95; }
-              .card h2 { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem; }
-              .card span { font-size: 0.875rem; opacity: 0.8; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <h1>✈️ Trip Planner</h1>
-              <p>Choose your preferred UI variant</p>
-              <div class="cards">
-                <a href="notion/" class="card card-a">
-                  <h2>Notion-like</h2>
-                  <span>Clean, minimal, productivity-focused</span>
-                </a>
-                <a href="cards/" class="card card-b">
-                  <h2>Travel Cards</h2>
-                  <span>Big cards, playful, photo-friendly</span>
-                </a>
-              </div>
-            </div>
-          </body>
-          </html>
-          EOF
+      - name: Build
+        run: pnpm build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: dist/notion
 
   deploy:
     environment:

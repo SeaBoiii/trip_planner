@@ -1,11 +1,6 @@
 # ✈️ Trip Planner
 
-A mobile-first Trip Planner web app with **two UI variants** sharing the same core engine. Built with React, TypeScript, Vite, and TailwindCSS. Everything runs client-side with localStorage persistence.
-
-| Variant A — Notion-like | Variant B — Travel Cards |
-|---|---|
-| Clean, minimal, productivity-focused | Big cards, playful, photo-friendly |
-| Left sidebar + list layout | Card gallery + floating actions |
+A mobile-first Trip Planner web app built with React, TypeScript, Vite, and TailwindCSS. Clean Notion-inspired UI with full dark mode, trip templates, and mobile-safe reordering. Everything runs client-side with localStorage persistence.
 
 ## Quick Start
 
@@ -16,11 +11,11 @@ npm i -g pnpm
 # Install dependencies
 pnpm install
 
-# Run Variant A (Notion-like)
-pnpm dev:notion
+# Run dev server
+pnpm dev
 
-# Run Variant B (Travel Cards)
-pnpm dev:cards
+# Build for production
+pnpm build
 ```
 
 ## Project Structure
@@ -28,10 +23,9 @@ pnpm dev:cards
 ```
 trip_planner/
 ├── apps/
-│   ├── notion/          # Variant A — Notion-like UI
-│   └── cards/           # Variant B — Travel Card UI
+│   └── notion/          # Main app — Notion-like UI
 ├── packages/
-│   ├── core/            # Shared types, state, storage, utils
+│   ├── core/            # Shared types, state, storage, utils, templates
 │   └── ui/              # Shared UI components (Button, Modal, etc.)
 ├── .github/workflows/   # GitHub Pages deployment
 ├── pnpm-workspace.yaml
@@ -42,18 +36,19 @@ trip_planner/
 
 | Command | Description |
 |---|---|
-| `pnpm dev:notion` | Start Notion variant dev server |
-| `pnpm dev:cards` | Start Cards variant dev server |
-| `pnpm build:notion` | Build Notion variant for production |
-| `pnpm build:cards` | Build Cards variant for production |
-| `pnpm build` | Build both variants |
+| `pnpm dev` | Start dev server |
+| `pnpm build` | Build for production |
+| `pnpm preview` | Preview production build |
 
-## Features (MVP)
+## Features
 
 - **Trip management** — Create, rename, delete, duplicate trips
+- **Trip templates** — 4 built-in templates (City Weekend, Road Trip, Business Trip, Theme Park Day) + save any trip as a custom template
 - **Itinerary by days** — Add/edit/delete days with optional dates
 - **Itinerary items** — Title, time, location, notes, cost, tags, map links
-- **Drag & drop** — Reorder items within and between days (touch-friendly)
+- **Mobile-safe reordering** — Explicit "Reorder" mode with drag handles; prevents accidental reorder during scroll
+- **Move-to fallback** — Move items between days via a picker modal (great for touch devices)
+- **Dark mode** — System-aware with manual override (System / Light / Dark), persisted, flash-free
 - **Budget totals** — Day and trip cost summaries with currency formatting
 - **Export / Import** — JSON file download/upload with schema validation
 - **Print view** — Clean, print-friendly itinerary layout
@@ -61,8 +56,8 @@ trip_planner/
 
 ## Tech Stack
 
-- **Vite** + **React 18** + **TypeScript**
-- **TailwindCSS** for styling
+- **Vite 5** + **React 18** + **TypeScript 5**
+- **TailwindCSS** with `darkMode: 'class'`
 - **@dnd-kit** for drag & drop (touch + pointer)
 - **lucide-react** for icons
 - **localStorage** with versioned schema + migration framework
@@ -74,39 +69,36 @@ All data is stored in `localStorage` under the key `trip_planner_v1` with a vers
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "data": {
     "trips": [...],
-    "activeTripId": "..."
+    "activeTripId": "...",
+    "templates": [...],
+    "settings": { "theme": "system" }
   }
 }
 ```
 
-Both UI variants share the same storage, so switching between them preserves your data.
+Existing v1 data is automatically migrated to v2 on load.
 
 ## Deploy to GitHub Pages
 
 1. Push to the `main` branch
 2. Go to **Settings → Pages → Source → GitHub Actions**
-3. The workflow builds both variants and deploys them:
-   - `/<repo>/notion/` — Variant A
-   - `/<repo>/cards/` — Variant B
-   - `/<repo>/` — Landing page with variant picker
+3. The workflow builds and deploys to `/<repo>/`
 
 ## Mobile-First Design
 
 - Primary target: 360–430px phone screens
 - Responsive up to 1024px+ desktop
-- Touch-friendly drag handles and tap targets
+- Touch-friendly drag handles and tap targets (gated behind Reorder mode)
 - iOS safe-area padding support
-- Bottom navigation on mobile, sidebar/topbar on desktop
+- Bottom navigation on mobile, sidebar on desktop
 
 ## Future Roadmap
 
 - [ ] Day reordering via drag & drop
-- [ ] Dark mode
 - [ ] PWA / offline support
-- [ ] Trip templates
 - [ ] Collaborative editing (via CRDTs or similar)
 - [ ] Map integration (display locations)
 - [ ] Image attachments per item

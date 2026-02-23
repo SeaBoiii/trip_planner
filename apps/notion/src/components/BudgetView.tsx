@@ -12,7 +12,7 @@ export function BudgetView({ trip }: BudgetViewProps) {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-4">
-      <h2 className="text-xl font-bold text-gray-900 mb-1">{trip.name} — Budget</h2>
+      <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-1">{trip.name} — Budget</h2>
       <p className="text-2xl font-bold text-blue-600 mb-6">
         {formatCurrency(total, trip.currency)}
       </p>
@@ -21,19 +21,19 @@ export function BudgetView({ trip }: BudgetViewProps) {
         {trip.days.map((day) => {
           const dt = dayTotal(day.items);
           return (
-            <div key={day.id} className="border border-gray-200 rounded-lg bg-white p-3">
+            <div key={day.id} className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 p-3">
               <div className="flex items-center justify-between mb-2">
-                <span className="font-medium text-sm text-gray-800">{day.label}</span>
-                <span className="text-sm font-semibold text-gray-700">{formatCurrency(dt, trip.currency)}</span>
+                <span className="font-medium text-sm text-gray-800 dark:text-gray-200">{day.label}</span>
+                <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">{formatCurrency(dt, trip.currency)}</span>
               </div>
               {day.items.filter((i) => i.cost).map((item) => (
-                <div key={item.id} className="flex justify-between text-xs text-gray-600 py-0.5">
+                <div key={item.id} className="flex justify-between text-xs text-gray-600 dark:text-gray-400 py-0.5">
                   <span>{item.title}</span>
                   <span>{formatCurrency(item.cost!, trip.currency)}</span>
                 </div>
               ))}
               {day.items.filter((i) => i.cost).length === 0 && (
-                <p className="text-xs text-gray-400">No costs</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">No costs</p>
               )}
             </div>
           );
@@ -41,7 +41,7 @@ export function BudgetView({ trip }: BudgetViewProps) {
       </div>
 
       {trip.days.length === 0 && (
-        <div className="text-center text-gray-400 py-12">
+        <div className="text-center text-gray-400 dark:text-gray-500 py-12">
           <DollarSign size={32} className="mx-auto mb-2" />
           <p>No days or items to show</p>
         </div>

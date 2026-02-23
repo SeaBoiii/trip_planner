@@ -21,33 +21,33 @@ export function PrintView({ trip, onClose }: PrintViewProps) {
         </Button>
       </div>
 
-      <h1 className="text-2xl font-bold text-gray-900 mb-1">{trip.name}</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-1">{trip.name}</h1>
       {(trip.startDate || trip.endDate) && (
-        <p className="text-sm text-gray-500 mb-1">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
           {trip.startDate}{trip.startDate && trip.endDate && ' → '}{trip.endDate}
         </p>
       )}
-      <p className="text-lg font-semibold text-gray-700 mb-6">
+      <p className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-6">
         Total: {formatCurrency(tripTotal(trip.days), trip.currency)}
       </p>
 
       {trip.days.map((day) => (
         <div key={day.id} className="mb-6">
-          <div className="flex items-center justify-between border-b border-gray-300 pb-1 mb-2">
-            <h2 className="text-base font-semibold text-gray-800">
+          <div className="flex items-center justify-between border-b border-gray-300 dark:border-gray-600 pb-1 mb-2">
+            <h2 className="text-base font-semibold text-gray-800 dark:text-gray-200">
               {day.label}{day.date ? ` — ${day.date}` : ''}
             </h2>
-            <span className="text-sm text-gray-600">{formatCurrency(dayTotal(day.items), trip.currency)}</span>
+            <span className="text-sm text-gray-600 dark:text-gray-400">{formatCurrency(dayTotal(day.items), trip.currency)}</span>
           </div>
           {day.items.length === 0 && <p className="text-sm text-gray-400 italic">No items</p>}
           <table className="w-full text-sm">
             <tbody>
               {day.items.map((item) => (
-                <tr key={item.id} className="border-b border-gray-100">
-                  <td className="py-1 pr-2 font-medium text-gray-800">{item.title}</td>
-                  <td className="py-1 pr-2 text-gray-500">{item.time ?? ''}</td>
-                  <td className="py-1 pr-2 text-gray-500">{item.location ?? ''}</td>
-                  <td className="py-1 text-right text-gray-600">
+                <tr key={item.id} className="border-b border-gray-100 dark:border-gray-700">
+                  <td className="py-1 pr-2 font-medium text-gray-800 dark:text-gray-200">{item.title}</td>
+                  <td className="py-1 pr-2 text-gray-500 dark:text-gray-400">{item.time ?? ''}</td>
+                  <td className="py-1 pr-2 text-gray-500 dark:text-gray-400">{item.location ?? ''}</td>
+                  <td className="py-1 text-right text-gray-600 dark:text-gray-400">
                     {item.cost != null ? formatCurrency(item.cost, trip.currency) : ''}
                   </td>
                 </tr>

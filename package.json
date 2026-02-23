@@ -3,13 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev:notion": "pnpm --filter @trip-planner/notion dev",
-    "dev:cards": "pnpm --filter @trip-planner/cards dev",
-    "build:notion": "pnpm --filter @trip-planner/notion build",
-    "build:cards": "pnpm --filter @trip-planner/cards build",
-    "build": "pnpm build:notion && pnpm build:cards",
-    "preview:notion": "pnpm --filter @trip-planner/notion preview",
-    "preview:cards": "pnpm --filter @trip-planner/cards preview"
+    "dev": "pnpm --filter @trip-planner/notion dev",
+    "build": "pnpm --filter @trip-planner/notion build",
+    "preview": "pnpm --filter @trip-planner/notion preview"
   },
   "engines": {
     "node": ">=18"

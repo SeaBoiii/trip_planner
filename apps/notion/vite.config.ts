@@ -4,7 +4,7 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
-  base: '/trip_planner/notion/',
+  base: '/trip_planner/',
   build: {
     outDir: '../../dist/notion',
     emptyOutDir: true,

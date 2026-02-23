@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import type { Trip, Day, Item } from '@trip-planner/core';
-import { formatCurrency, dayTotal, tripTotal, CURRENCIES } from '@trip-planner/core';
-import { Button, Input, Select, Modal, ConfirmDialog, EmptyState, toast } from '@trip-planner/ui';
-import { Plus, Trash2, ChevronDown, ChevronRight, GripVertical, Settings, CalendarDays } from 'lucide-react';
+import { formatCurrency, dayTotal, tripTotal } from '@trip-planner/core';
+import { Button, Input, Modal, ConfirmDialog, EmptyState, toast } from '@trip-planner/ui';
+import { Plus, Trash2, ChevronDown, ChevronRight, Settings, CalendarDays, ArrowUpDown, Check, ArrowRightLeft } from 'lucide-react';
 import { ItemRow } from './ItemRow';
 import { ItemForm } from './ItemForm';
 import { TripSettings } from './TripSettings';
+import { MoveToModal } from './MoveToModal';
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -23,6 +24,8 @@ export function Itinerary({ trip, store }: ItineraryProps) {
   const [editingItem, setEditingItem] = useState<{ dayId: string; item?: Item } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'day' | 'item'; dayId: string; itemId?: string } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [reorderMode, setReorderMode] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<{ dayId: string; item: Item } | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -71,21 +74,37 @@ export function Itinerary({ trip, store }: ItineraryProps) {
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
+    if (!reorderMode) return;
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    // Parse drag data
     const activeData = active.data.current as { dayId: string; index: number } | undefined;
     const overData = over.data.current as { dayId: string; index: number } | undefined;
     if (!activeData || !overData) return;
 
-    store.moveItem(
-      trip.id,
-      activeData.dayId,
-      overData.dayId,
-      active.id as string,
-      overData.index
-    );
+    if (activeData.dayId === overData.dayId) {
+      // Within-day reorder
+      const day = trip.days.find((d) => d.id === activeData.dayId);
+      if (!day) return;
+      const ids = day.items.map((i) => i.id);
+      const oldIdx = ids.indexOf(active.id as string);
+      const newIdx = ids.indexOf(over.id as string);
+      if (oldIdx === -1 || newIdx === -1) return;
+      const reordered = [...ids];
+      reordered.splice(oldIdx, 1);
+      reordered.splice(newIdx, 0, active.id as string);
+      store.reorderItems(trip.id, activeData.dayId, reordered);
+    } else {
+      // Cross-day move
+      store.moveItem(trip.id, activeData.dayId, overData.dayId, active.id as string, overData.index);
+    }
+  };
+
+  const handleMoveTo = (targetDayId: string, position: number) => {
+    if (!moveTarget) return;
+    store.moveItem(trip.id, moveTarget.dayId, targetDayId, moveTarget.item.id, position);
+    toast('Item moved');
+    setMoveTarget(null);
   };
 
   return (
@@ -93,18 +112,27 @@ export function Itinerary({ trip, store }: ItineraryProps) {
       {/* Trip header */}
       <div className="flex items-start justify-between mb-4">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">{trip.name}</h2>
+          <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{trip.name}</h2>
           {(trip.startDate || trip.endDate) && (
-            <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-1">
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5 flex items-center gap-1">
               <CalendarDays size={14} />
               {trip.startDate}{trip.startDate && trip.endDate && ' → '}{trip.endDate}
             </p>
           )}
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             Total: {formatCurrency(tripTotal(trip.days), trip.currency)}
           </p>
         </div>
         <div className="flex gap-2 no-print">
+          {trip.days.some((d) => d.items.length > 0) && (
+            <Button
+              variant={reorderMode ? 'primary' : 'ghost'}
+              size="sm"
+              onClick={() => setReorderMode(!reorderMode)}
+            >
+              {reorderMode ? <><Check size={14} /> Done</> : <><ArrowUpDown size={14} /> Reorder</>}
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => setShowSettings(true)}>
             <Settings size={16} />
           </Button>
@@ -133,18 +161,18 @@ export function Itinerary({ trip, store }: ItineraryProps) {
           {trip.days.map((day) => {
             const isExpanded = expandedDays.has(day.id);
             return (
-              <div key={day.id} className="border border-gray-200 rounded-lg bg-white">
+              <div key={day.id} className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800">
                 {/* Day header */}
                 <div
-                  className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-gray-50 transition-colors"
+                  className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
                   onClick={() => toggleDay(day.id)}
                 >
                   {isExpanded ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
                   <div className="flex-1 min-w-0">
-                    <span className="font-medium text-sm text-gray-800">{day.label}</span>
-                    {day.date && <span className="text-xs text-gray-500 ml-2">{day.date}</span>}
+                    <span className="font-medium text-sm text-gray-800 dark:text-gray-200">{day.label}</span>
+                    {day.date && <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">{day.date}</span>}
                   </div>
-                  <span className="text-xs text-gray-500 whitespace-nowrap">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
                     {formatCurrency(dayTotal(day.items), trip.currency)}
                   </span>
                   <button
@@ -152,7 +180,7 @@ export function Itinerary({ trip, store }: ItineraryProps) {
                       e.stopPropagation();
                       setDeleteTarget({ type: 'day', dayId: day.id });
                     }}
-                    className="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors no-print"
+                    className="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors no-print"
                     aria-label="Delete day"
                   >
                     <Trash2 size={14} />
@@ -161,7 +189,7 @@ export function Itinerary({ trip, store }: ItineraryProps) {
 
                 {/* Items */}
                 {isExpanded && (
-                  <div className="border-t border-gray-100">
+                  <div className="border-t border-gray-100 dark:border-gray-700">
                     <SortableContext items={day.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
                       {day.items.map((item, index) => (
                         <SortableItem
@@ -170,22 +198,27 @@ export function Itinerary({ trip, store }: ItineraryProps) {
                           dayId={day.id}
                           index={index}
                           currency={trip.currency}
+                          reorderMode={reorderMode}
+                          showMoveTo={trip.days.length > 1}
                           onEdit={() => setEditingItem({ dayId: day.id, item })}
                           onDelete={() => setDeleteTarget({ type: 'item', dayId: day.id, itemId: item.id })}
+                          onMoveTo={() => setMoveTarget({ dayId: day.id, item })}
                         />
                       ))}
                     </SortableContext>
                     {day.items.length === 0 && (
-                      <p className="px-3 py-4 text-sm text-gray-400 text-center">No items yet</p>
+                      <p className="px-3 py-4 text-sm text-gray-400 dark:text-gray-500 text-center">No items yet</p>
                     )}
-                    <div className="px-3 py-2 border-t border-gray-50 no-print">
-                      <button
-                        onClick={() => setEditingItem({ dayId: day.id })}
-                        className="flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 transition-colors"
-                      >
-                        <Plus size={14} /> Add item
-                      </button>
-                    </div>
+                    {!reorderMode && (
+                      <div className="px-3 py-2 border-t border-gray-50 dark:border-gray-700 no-print">
+                        <button
+                          onClick={() => setEditingItem({ dayId: day.id })}
+                          className="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                        >
+                          <Plus size={14} /> Add item
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -258,23 +291,39 @@ export function Itinerary({ trip, store }: ItineraryProps) {
         trip={trip}
         onClose={() => setShowSettings(false)}
         onUpdate={(updates) => store.updateTrip(trip.id, updates)}
+        theme={store.state.settings.theme}
+        onThemeChange={store.setTheme}
+      />
+
+      {/* Move-to Modal */}
+      <MoveToModal
+        open={!!moveTarget}
+        days={trip.days}
+        currentDayId={moveTarget?.dayId ?? ''}
+        itemTitle={moveTarget?.item.title ?? ''}
+        onMove={handleMoveTo}
+        onClose={() => setMoveTarget(null)}
       />
     </div>
   );
 }
 
 // Sortable item wrapper
-function SortableItem({ item, dayId, index, currency, onEdit, onDelete }: {
+function SortableItem({ item, dayId, index, currency, reorderMode, showMoveTo, onEdit, onDelete, onMoveTo }: {
   item: Item;
   dayId: string;
   index: number;
   currency: string;
+  reorderMode: boolean;
+  showMoveTo: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  onMoveTo: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
     data: { dayId, index },
+    disabled: !reorderMode,
   });
 
   const style = {
@@ -290,7 +339,9 @@ function SortableItem({ item, dayId, index, currency, onEdit, onDelete }: {
         currency={currency}
         onEdit={onEdit}
         onDelete={onDelete}
-        dragHandleProps={{ ...attributes, ...listeners }}
+        onMoveTo={showMoveTo ? onMoveTo : undefined}
+        reorderMode={reorderMode}
+        dragHandleProps={reorderMode ? { ...attributes, ...listeners } : undefined}
       />
     </div>
   );

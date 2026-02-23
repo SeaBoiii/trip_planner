@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import type { Trip } from '@trip-planner/core';
+import type { Trip, Template } from '@trip-planner/core';
 import { Button, Input, Modal, ConfirmDialog, EmptyState, toast } from '@trip-planner/ui';
-import { Plus, MoreHorizontal, Copy, Trash2, MapPin } from 'lucide-react';
+import { Plus, MoreHorizontal, Copy, Trash2, MapPin, BookTemplate, FileText } from 'lucide-react';
 
 interface TripListProps {
   trips: Trip[];
@@ -10,20 +10,36 @@ interface TripListProps {
   onCreate: (name: string, currency?: string) => void;
   onDelete: (id: string) => void;
   onDuplicate: (id: string) => void;
+  onSaveAsTemplate: (tripId: string, name: string, description: string) => void;
+  templates: Template[];
+  onCreateFromTemplate: (template: Template, tripName: string) => void;
+  onDeleteTemplate: (templateId: string) => void;
 }
 
-export function TripList({ trips, activeTripId, onSelect, onCreate, onDelete, onDuplicate }: TripListProps) {
+export function TripList({ trips, activeTripId, onSelect, onCreate, onDelete, onDuplicate, onSaveAsTemplate, templates, onCreateFromTemplate, onDeleteTemplate }: TripListProps) {
   const [showCreate, setShowCreate] = useState(false);
+  const [createMode, setCreateMode] = useState<'blank' | 'template'>('blank');
   const [newName, setNewName] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [saveTemplateId, setSaveTemplateId] = useState<string | null>(null);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDesc, setTemplateDesc] = useState('');
 
   const handleCreate = () => {
     if (!newName.trim()) return;
-    onCreate(newName.trim());
+    if (createMode === 'template' && selectedTemplate) {
+      onCreateFromTemplate(selectedTemplate, newName.trim());
+      toast('Trip created from template');
+    } else {
+      onCreate(newName.trim());
+      toast('Trip created');
+    }
     setNewName('');
+    setSelectedTemplate(null);
+    setCreateMode('blank');
     setShowCreate(false);
-    toast('Trip created');
   };
 
   const handleDelete = () => {
@@ -34,13 +50,22 @@ export function TripList({ trips, activeTripId, onSelect, onCreate, onDelete, on
     }
   };
 
+  const handleSaveTemplate = () => {
+    if (!saveTemplateId || !templateName.trim()) return;
+    onSaveAsTemplate(saveTemplateId, templateName.trim(), templateDesc.trim());
+    toast('Saved as template');
+    setSaveTemplateId(null);
+    setTemplateName('');
+    setTemplateDesc('');
+  };
+
   return (
     <div className="p-3">
       <div className="flex items-center justify-between mb-2 px-1">
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">My Trips</span>
+        <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">My Trips</span>
         <button
           onClick={() => setShowCreate(true)}
-          className="p-1 rounded hover:bg-gray-100 text-gray-500 transition-colors"
+          className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"
           aria-label="Create trip"
         >
           <Plus size={16} />
@@ -66,8 +91,8 @@ export function TripList({ trips, activeTripId, onSelect, onCreate, onDelete, on
             key={trip.id}
             className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
               trip.id === activeTripId
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-700 hover:bg-gray-50'
+                ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
             }`}
             onClick={() => onSelect(trip.id)}
           >
@@ -78,13 +103,13 @@ export function TripList({ trips, activeTripId, onSelect, onCreate, onDelete, on
                   e.stopPropagation();
                   setMenuId(menuId === trip.id ? null : trip.id);
                 }}
-                className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 transition-all"
+                className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all"
                 aria-label="Trip actions"
               >
                 <MoreHorizontal size={14} />
               </button>
               {menuId === trip.id && (
-                <div className="absolute right-0 top-8 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-36 animate-fade-in">
+                <div className="absolute right-0 top-8 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 w-44 animate-fade-in">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -92,9 +117,22 @@ export function TripList({ trips, activeTripId, onSelect, onCreate, onDelete, on
                       setMenuId(null);
                       toast('Trip duplicated');
                     }}
-                    className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                    className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
                   >
                     <Copy size={14} /> Duplicate
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const t = trips.find((t) => t.id === trip.id);
+                      setTemplateName(t?.name ?? '');
+                      setTemplateDesc('');
+                      setSaveTemplateId(trip.id);
+                      setMenuId(null);
+                    }}
+                    className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  >
+                    <BookTemplate size={14} /> Save as Template
                   </button>
                   <button
                     onClick={(e) => {
@@ -102,7 +140,7 @@ export function TripList({ trips, activeTripId, onSelect, onCreate, onDelete, on
                       setDeleteId(trip.id);
                       setMenuId(null);
                     }}
-                    className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+                    className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
                   >
                     <Trash2 size={14} /> Delete
                   </button>
@@ -113,28 +151,119 @@ export function TripList({ trips, activeTripId, onSelect, onCreate, onDelete, on
         ))}
       </div>
 
-      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="New Trip">
+      {/* New Trip Modal — with template picker */}
+      <Modal open={showCreate} onClose={() => { setShowCreate(false); setCreateMode('blank'); setSelectedTemplate(null); }} title="New Trip">
+        <div className="flex flex-col gap-4">
+          {/* Mode toggle */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setCreateMode('blank'); setSelectedTemplate(null); }}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                createMode === 'blank'
+                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'
+              }`}
+            >
+              <FileText size={14} /> Blank Trip
+            </button>
+            <button
+              onClick={() => setCreateMode('template')}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                createMode === 'template'
+                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'
+              }`}
+            >
+              <BookTemplate size={14} /> From Template
+            </button>
+          </div>
+
+          {/* Template picker */}
+          {createMode === 'template' && (
+            <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
+              {templates.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  onClick={() => setSelectedTemplate(tpl)}
+                  className={`flex flex-col text-left px-3 py-2 rounded-lg border transition-colors ${
+                    selectedTemplate?.id === tpl.id
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30'
+                      : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                  }`}
+                >
+                  <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{tpl.name}</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">{tpl.description}</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                    {tpl.days.length} day{tpl.days.length !== 1 ? 's' : ''} · {tpl.days.reduce((s, d) => s + d.items.length, 0)} items
+                    {!tpl.builtIn && ' · Custom'}
+                  </span>
+                </button>
+              ))}
+              {templates.length === 0 && (
+                <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-4">No templates available</p>
+              )}
+            </div>
+          )}
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleCreate();
+            }}
+            className="flex flex-col gap-4"
+          >
+            <Input
+              label="Trip Name"
+              placeholder="e.g., Tokyo 2026"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              autoFocus
+              required
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" type="button" onClick={() => { setShowCreate(false); setCreateMode('blank'); }}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={!newName.trim() || (createMode === 'template' && !selectedTemplate)}
+              >
+                Create
+              </Button>
+            </div>
+          </form>
+        </div>
+      </Modal>
+
+      {/* Save as Template Modal */}
+      <Modal open={!!saveTemplateId} onClose={() => setSaveTemplateId(null)} title="Save as Template">
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            handleCreate();
+            handleSaveTemplate();
           }}
           className="flex flex-col gap-4"
         >
           <Input
-            label="Trip Name"
-            placeholder="e.g., Tokyo 2026"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
+            label="Template Name"
+            placeholder="e.g., Weekend Getaway"
+            value={templateName}
+            onChange={(e) => setTemplateName(e.target.value)}
             autoFocus
             required
           />
+          <Input
+            label="Description (optional)"
+            placeholder="A short description of this template"
+            value={templateDesc}
+            onChange={(e) => setTemplateDesc(e.target.value)}
+          />
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" type="button" onClick={() => setShowCreate(false)}>
+            <Button variant="secondary" type="button" onClick={() => setSaveTemplateId(null)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!newName.trim()}>
-              Create
+            <Button type="submit" disabled={!templateName.trim()}>
+              Save Template
             </Button>
           </div>
         </form>
