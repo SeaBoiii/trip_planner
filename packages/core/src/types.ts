@@ -1,10 +1,35 @@
-// ── Core Types ──
+export type LocationSource = 'nominatim_osm';
+
+export type OSMType = 'node' | 'way' | 'relation';
+
+export interface OSMRef {
+  osmType: OSMType;
+  osmId: number;
+}
+
+export interface LocationOpeningHours {
+  raw?: string;
+  timezoneHint?: string;
+  fetchedAt?: number;
+}
+
+export interface Location {
+  source: LocationSource;
+  displayName: string;
+  lat: number;
+  lon: number;
+  address?: Record<string, string>;
+  osm?: OSMRef;
+  lastFetchedAt?: number;
+  openingHours?: LocationOpeningHours;
+}
 
 export interface Item {
   id: string;
   title: string;
   time?: string;
-  location?: string;
+  locationText?: string;
+  location?: Location;
   notes?: string;
   cost?: number;
   tags: string[];
@@ -24,18 +49,17 @@ export interface Trip {
   startDate?: string;
   endDate?: string;
   currency: string;
-  coverPhoto?: string; // data URL for cards variant
+  coverPhoto?: string;
   days: Day[];
   createdAt: string;
   updatedAt: string;
 }
 
-// ── Template Types ──
-
 export interface ItemTemplate {
   title: string;
   time?: string;
-  location?: string;
+  locationText?: string;
+  location?: Location;
   notes?: string;
   cost?: number;
   tags: string[];
@@ -57,15 +81,12 @@ export interface Template {
   createdAt: string;
 }
 
-// ── Settings Types ──
-
 export type ThemePreference = 'system' | 'light' | 'dark';
 
 export interface AppSettings {
   theme: ThemePreference;
+  geocodingProviderEndpoint: string;
 }
-
-// ── App State ──
 
 export interface AppState {
   trips: Trip[];

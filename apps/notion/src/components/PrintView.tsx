@@ -3,6 +3,7 @@ import type { Trip } from '@trip-planner/core';
 import { formatCurrency, dayTotal, tripTotal } from '@trip-planner/core';
 import { Button } from '@trip-planner/ui';
 import { ArrowLeft, Printer } from 'lucide-react';
+import { getItemLocationLabel } from '../lib/location';
 
 interface PrintViewProps {
   trip: Trip;
@@ -42,16 +43,19 @@ export function PrintView({ trip, onClose }: PrintViewProps) {
           {day.items.length === 0 && <p className="text-sm text-gray-400 italic">No items</p>}
           <table className="w-full text-sm">
             <tbody>
-              {day.items.map((item) => (
-                <tr key={item.id} className="border-b border-gray-100 dark:border-gray-700">
-                  <td className="py-1 pr-2 font-medium text-gray-800 dark:text-gray-200">{item.title}</td>
-                  <td className="py-1 pr-2 text-gray-500 dark:text-gray-400">{item.time ?? ''}</td>
-                  <td className="py-1 pr-2 text-gray-500 dark:text-gray-400">{item.location ?? ''}</td>
-                  <td className="py-1 text-right text-gray-600 dark:text-gray-400">
-                    {item.cost != null ? formatCurrency(item.cost, trip.currency) : ''}
-                  </td>
-                </tr>
-              ))}
+              {day.items.map((item) => {
+                const locationLabel = getItemLocationLabel(item);
+                return (
+                  <tr key={item.id} className="border-b border-gray-100 dark:border-gray-700">
+                    <td className="py-1 pr-2 font-medium text-gray-800 dark:text-gray-200">{item.title}</td>
+                    <td className="py-1 pr-2 text-gray-500 dark:text-gray-400">{item.time ?? ''}</td>
+                    <td className="py-1 pr-2 text-gray-500 dark:text-gray-400">{locationLabel ?? ''}</td>
+                    <td className="py-1 text-right text-gray-600 dark:text-gray-400">
+                      {item.cost != null ? formatCurrency(item.cost, trip.currency) : ''}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

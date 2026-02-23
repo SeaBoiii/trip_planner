@@ -1,6 +1,22 @@
 // @trip-planner/core — public API
 
-export type { AppState, Trip, Day, Item, VersionedSchema, Template, DayTemplate, ItemTemplate, ThemePreference, AppSettings } from './types';
+export type {
+  AppState,
+  Trip,
+  Day,
+  Item,
+  VersionedSchema,
+  Template,
+  DayTemplate,
+  ItemTemplate,
+  ThemePreference,
+  AppSettings,
+  Location,
+  LocationSource,
+  OSMRef,
+  OSMType,
+  LocationOpeningHours,
+} from './types';
 
 export {
   createTrip,
@@ -41,3 +57,17 @@ export { nanoid, deepClone, dayTotal, tripTotal, formatCurrency, CURRENCIES } fr
 export { useTripStore } from './hooks';
 
 export { builtInTemplates } from './templates';
+
+export {
+  searchPlaces,
+  DEFAULT_NOMINATIM_ENDPOINT,
+  type GeocodingSearchResult,
+  type SearchPlacesOptions,
+} from './services/geocoding';
+
+export {
+  fetchOpeningHours,
+  DEFAULT_OVERPASS_ENDPOINT,
+  type OsmOpeningHoursDetails,
+  type FetchOpeningHoursOptions,
+} from './services/osmDetails';

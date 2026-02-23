@@ -267,7 +267,9 @@ export function Itinerary({ trip, store }: ItineraryProps) {
           open
           dayId={editingItem.dayId}
           item={editingItem.item}
+          geocodingProviderEndpoint={store.state.settings.geocodingProviderEndpoint}
           onSave={handleSaveItem}
+          onPatchItem={(dayId, itemId, updates) => store.updateItem(trip.id, dayId, itemId, updates)}
           onClose={() => setEditingItem(null)}
         />
       )}
@@ -293,6 +295,8 @@ export function Itinerary({ trip, store }: ItineraryProps) {
         onUpdate={(updates) => store.updateTrip(trip.id, updates)}
         theme={store.state.settings.theme}
         onThemeChange={store.setTheme}
+        geocodingProviderEndpoint={store.state.settings.geocodingProviderEndpoint}
+        onUpdateSettings={store.updateSettings}
       />
 
       {/* Move-to Modal */}

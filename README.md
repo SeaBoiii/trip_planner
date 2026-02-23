@@ -1,6 +1,6 @@
-# ✈️ Trip Planner
+# Trip Planner
 
-A mobile-first Trip Planner web app built with React, TypeScript, Vite, and TailwindCSS. Clean Notion-inspired UI with full dark mode, trip templates, and mobile-safe reordering. Everything runs client-side with localStorage persistence.
+A mobile-first Trip Planner web app built with React, TypeScript, Vite, and TailwindCSS. It has a Notion-like UI, dark mode, local-first persistence, trip templates, map pins, and location search with OpenStreetMap data sources.
 
 ## Quick Start
 
@@ -20,16 +20,16 @@ pnpm build
 
 ## Project Structure
 
-```
+```text
 trip_planner/
-├── apps/
-│   └── notion/          # Main app — Notion-like UI
-├── packages/
-│   ├── core/            # Shared types, state, storage, utils, templates
-│   └── ui/              # Shared UI components (Button, Modal, etc.)
-├── .github/workflows/   # GitHub Pages deployment
-├── pnpm-workspace.yaml
-└── package.json
+|- apps/
+|  `- notion/          # Main app (Notion-like UI)
+|- packages/
+|  |- core/            # Shared types, state, storage, services, templates
+|  `- ui/              # Shared UI components
+|- .github/workflows/  # GitHub Pages deployment
+|- pnpm-workspace.yaml
+`- package.json
 ```
 
 ## Scripts
@@ -42,26 +42,39 @@ trip_planner/
 
 ## Features
 
-- **Trip management** — Create, rename, delete, duplicate trips
-- **Trip templates** — 4 built-in templates (City Weekend, Road Trip, Business Trip, Theme Park Day) + save any trip as a custom template
-- **Itinerary by days** — Add/edit/delete days with optional dates
-- **Itinerary items** — Title, time, location, notes, cost, tags, map links
-- **Mobile-safe reordering** — Explicit "Reorder" mode with drag handles; prevents accidental reorder during scroll
-- **Move-to fallback** — Move items between days via a picker modal (great for touch devices)
-- **Dark mode** — System-aware with manual override (System / Light / Dark), persisted, flash-free
-- **Budget totals** — Day and trip cost summaries with currency formatting
-- **Export / Import** — JSON file download/upload with schema validation
-- **Print view** — Clean, print-friendly itinerary layout
-- **18 currencies** — SGD, USD, EUR, GBP, JPY, and more
+- Trip management (create, rename, delete, duplicate)
+- Trip templates (built-in + save any trip as a custom template)
+- Day-by-day itinerary editing
+- Itinerary items with time, notes, tags, links, cost, and location support
+- Location search (OpenStreetMap Nominatim) with structured lat/lon storage + free-text fallback
+- Map view (Leaflet + OpenStreetMap tiles) with day filters and pinned itinerary items
+- Best-effort opening hours display from OpenStreetMap `opening_hours` tags (via Overpass API)
+- Mobile-safe drag reordering with explicit reorder mode
+- Move-to fallback modal for cross-day item moves
+- Dark mode (system/light/dark)
+- Budget totals by day and trip
+- JSON export/import with schema migrations
+- Print-friendly trip view
+
+## Map + Location Data
+
+- Geocoding search uses OpenStreetMap Nominatim (`nominatim.openstreetmap.org`) by default.
+- Requests are debounced, cached, and rate-limited to 1 request/second to comply with public API usage expectations.
+- Map tiles and markers use OpenStreetMap data and show required attribution in the map UI.
+- Opening hours are fetched best-effort from OSM tags through the Overpass API and parsed with the `opening_hours` package.
+- Opening hours can be missing, unparsable, or outdated; always verify directly with venues for time-sensitive plans.
+- A configurable geocoding endpoint is available in Settings (advanced) for self-hosted/alternate Nominatim endpoints.
 
 ## Tech Stack
 
-- **Vite 5** + **React 18** + **TypeScript 5**
-- **TailwindCSS** with `darkMode: 'class'`
-- **@dnd-kit** for drag & drop (touch + pointer)
-- **lucide-react** for icons
-- **localStorage** with versioned schema + migration framework
-- **pnpm workspaces** monorepo
+- Vite 5 + React 18 + TypeScript 5
+- TailwindCSS
+- `@dnd-kit` (drag and drop)
+- `leaflet` + `react-leaflet` (map view)
+- `opening_hours` (OSM opening hours parsing)
+- `lucide-react` (icons)
+- localStorage with versioned schema migrations
+- pnpm workspaces monorepo
 
 ## Data Persistence
 
@@ -69,41 +82,46 @@ All data is stored in `localStorage` under the key `trip_planner_v1` with a vers
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "data": {
     "trips": [...],
     "activeTripId": "...",
     "templates": [...],
-    "settings": { "theme": "system" }
+    "settings": {
+      "theme": "system",
+      "geocodingProviderEndpoint": "https://nominatim.openstreetmap.org"
+    }
   }
 }
 ```
 
-Existing v1 data is automatically migrated to v2 on load.
+Migration notes:
+
+- Existing legacy item `location` strings are migrated to `locationText`.
+- Structured locations are stored in `item.location` with coordinates and OSM references.
 
 ## Deploy to GitHub Pages
 
 1. Push to the `main` branch
-2. Go to **Settings → Pages → Source → GitHub Actions**
+2. Go to GitHub repository Settings -> Pages -> Source -> GitHub Actions
 3. The workflow builds and deploys to `/<repo>/`
 
 ## Mobile-First Design
 
-- Primary target: 360–430px phone screens
-- Responsive up to 1024px+ desktop
-- Touch-friendly drag handles and tap targets (gated behind Reorder mode)
+- Primary target: phone screens (roughly 360-430px)
+- Responsive desktop layout with sidebar + map/list split on larger screens
+- Touch-friendly drag handles and bottom navigation
 - iOS safe-area padding support
-- Bottom navigation on mobile, sidebar on desktop
 
 ## Future Roadmap
 
-- [ ] Day reordering via drag & drop
+- [ ] Day reordering via drag and drop
+- [ ] Routing / travel time / distance
 - [ ] PWA / offline support
-- [ ] Collaborative editing (via CRDTs or similar)
-- [ ] Map integration (display locations)
 - [ ] Image attachments per item
 - [ ] Multi-currency conversion
 - [ ] Checklist items (packing list)
+- [ ] Collaborative editing
 
 ## License
 

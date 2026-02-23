@@ -173,8 +173,8 @@ export function saveAsTemplate(state: AppState, tripId: string, templateName: st
     currency: trip.currency,
     days: trip.days.map((d) => ({
       label: d.label,
-      items: d.items.map(({ title, time, location, notes, cost, tags, link }) => ({
-        title, time, location, notes, cost, tags, link,
+      items: d.items.map(({ title, time, locationText, location, notes, cost, tags, link }) => ({
+        title, time, locationText, location, notes, cost, tags, link,
       })),
     })),
     createdAt: new Date().toISOString(),
@@ -192,6 +192,7 @@ export function createTripFromTemplate(state: AppState, template: Template, trip
     const day = createNewDay(dt.label);
     day.items = dt.items.map((it) => createNewItem(it.title, {
       time: it.time,
+      locationText: it.locationText,
       location: it.location,
       notes: it.notes,
       cost: it.cost,

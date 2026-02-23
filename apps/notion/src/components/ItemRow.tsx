@@ -2,6 +2,7 @@ import React from 'react';
 import type { Item } from '@trip-planner/core';
 import { formatCurrency } from '@trip-planner/core';
 import { Clock, MapPin, GripVertical, ExternalLink, Tag, ArrowRightLeft } from 'lucide-react';
+import { getItemLocationLabel } from '../lib/location';
 
 interface ItemRowProps {
   item: Item;
@@ -14,6 +15,8 @@ interface ItemRowProps {
 }
 
 export function ItemRow({ item, currency, onEdit, onDelete, onMoveTo, reorderMode, dragHandleProps }: ItemRowProps) {
+  const locationLabel = getItemLocationLabel(item);
+
   return (
     <div className="flex items-start gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors group border-b border-gray-50 dark:border-gray-700 last:border-b-0">
       {/* Drag handle — only visible in reorder mode */}
@@ -50,9 +53,9 @@ export function ItemRow({ item, currency, onEdit, onDelete, onMoveTo, reorderMod
                 <Clock size={11} /> {item.time}
               </span>
             )}
-            {item.location && (
+            {locationLabel && (
               <span className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
-                <MapPin size={11} /> {item.location}
+                <MapPin size={11} /> {locationLabel}
               </span>
             )}
             {item.tags.length > 0 && (

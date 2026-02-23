@@ -3,13 +3,14 @@ import { useTripStore } from '@trip-planner/core';
 import { ToastContainer } from '@trip-planner/ui';
 import { TripList } from './components/TripList';
 import { Itinerary } from './components/Itinerary';
+import { MapView } from './components/MapView';
 import { BudgetView } from './components/BudgetView';
 import { PrintView } from './components/PrintView';
 import { ImportExport } from './components/ImportExport';
 import { useTheme } from './hooks/useTheme';
-import { Map, CalendarDays, DollarSign, Printer, FolderDown } from 'lucide-react';
+import { Map as MapIcon, CalendarDays, DollarSign, Printer, FolderDown, MapPin } from 'lucide-react';
 
-type Tab = 'trips' | 'itinerary' | 'budget' | 'print' | 'io';
+type Tab = 'trips' | 'itinerary' | 'map' | 'budget' | 'print' | 'io';
 
 export function App() {
   const store = useTripStore();
@@ -34,8 +35,8 @@ export function App() {
       {/* Desktop sidebar */}
       <aside className="hidden sm:flex flex-col w-64 border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         <div className="px-4 py-4 border-b border-gray-100 dark:border-gray-700">
-          <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-            <Map size={20} className="text-blue-600" />
+              <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+            <MapIcon size={20} className="text-blue-600" />
             Trip Planner
           </h1>
         </div>
@@ -54,6 +55,7 @@ export function App() {
           />
         </nav>
         <div className="p-3 border-t border-gray-100 dark:border-gray-700 flex flex-col gap-1">
+          <SidebarButton icon={<MapPin size={16} />} label="Map" active={tab === 'map'} onClick={() => setTab('map')} />
           <SidebarButton icon={<DollarSign size={16} />} label="Budget" active={tab === 'budget'} onClick={() => setTab('budget')} />
           <SidebarButton icon={<Printer size={16} />} label="Print" onClick={() => setShowPrint(true)} />
           <SidebarButton icon={<FolderDown size={16} />} label="Import/Export" active={tab === 'io'} onClick={() => setTab('io')} />
@@ -66,7 +68,7 @@ export function App() {
           <div className="sm:hidden">
             <div className="px-4 pt-4 pb-2">
               <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                <Map size={22} className="text-blue-600" />
+                <MapIcon size={22} className="text-blue-600" />
                 Trip Planner
               </h1>
             </div>
@@ -92,6 +94,14 @@ export function App() {
             Select or create a trip to get started
           </div>
         )}
+        {tab === 'map' && store.activeTrip && (
+          <MapView trip={store.activeTrip} onOpenItinerary={() => setTab('itinerary')} />
+        )}
+        {tab === 'map' && !store.activeTrip && (
+          <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm">
+            Select a trip to view the map
+          </div>
+        )}
         {tab === 'budget' && store.activeTrip && (
           <BudgetView trip={store.activeTrip} />
         )}
@@ -107,8 +117,9 @@ export function App() {
 
       {/* Mobile bottom nav */}
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 flex z-40" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-        <MobileTab icon={<Map size={20} />} label="Trips" active={tab === 'trips'} onClick={() => setTab('trips')} />
+        <MobileTab icon={<MapIcon size={20} />} label="Trips" active={tab === 'trips'} onClick={() => setTab('trips')} />
         <MobileTab icon={<CalendarDays size={20} />} label="Itinerary" active={tab === 'itinerary'} onClick={() => setTab('itinerary')} />
+        <MobileTab icon={<MapPin size={20} />} label="Map" active={tab === 'map'} onClick={() => setTab('map')} />
         <MobileTab icon={<DollarSign size={20} />} label="Budget" active={tab === 'budget'} onClick={() => setTab('budget')} />
         <MobileTab icon={<Printer size={20} />} label="Print" active={false} onClick={() => setShowPrint(true)} />
         <MobileTab icon={<FolderDown size={20} />} label="I/O" active={tab === 'io'} onClick={() => setTab('io')} />
