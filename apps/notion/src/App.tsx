@@ -5,12 +5,13 @@ import { TripList } from './components/TripList';
 import { Itinerary } from './components/Itinerary';
 import { MapView } from './components/MapView';
 import { BudgetView } from './components/BudgetView';
+import { SplitView } from './components/SplitView';
 import { PrintView } from './components/PrintView';
 import { ImportExport } from './components/ImportExport';
 import { useTheme } from './hooks/useTheme';
-import { Map as MapIcon, CalendarDays, DollarSign, Printer, FolderDown, MapPin } from 'lucide-react';
+import { Map as MapIcon, CalendarDays, DollarSign, Printer, FolderDown, MapPin, Users } from 'lucide-react';
 
-type Tab = 'trips' | 'itinerary' | 'map' | 'budget' | 'print' | 'io';
+type Tab = 'trips' | 'itinerary' | 'map' | 'budget' | 'split' | 'print' | 'io';
 
 export function App() {
   const store = useTripStore();
@@ -57,6 +58,7 @@ export function App() {
         <div className="p-3 border-t border-gray-100 dark:border-gray-700 flex flex-col gap-1">
           <SidebarButton icon={<MapPin size={16} />} label="Map" active={tab === 'map'} onClick={() => setTab('map')} />
           <SidebarButton icon={<DollarSign size={16} />} label="Budget" active={tab === 'budget'} onClick={() => setTab('budget')} />
+          <SidebarButton icon={<Users size={16} />} label="Split" active={tab === 'split'} onClick={() => setTab('split')} />
           <SidebarButton icon={<Printer size={16} />} label="Print" onClick={() => setShowPrint(true)} />
           <SidebarButton icon={<FolderDown size={16} />} label="Import/Export" active={tab === 'io'} onClick={() => setTab('io')} />
         </div>
@@ -95,7 +97,7 @@ export function App() {
           </div>
         )}
         {tab === 'map' && store.activeTrip && (
-          <MapView trip={store.activeTrip} onOpenItinerary={() => setTab('itinerary')} />
+          <MapView trip={store.activeTrip} settings={store.state.settings} onOpenItinerary={() => setTab('itinerary')} />
         )}
         {tab === 'map' && !store.activeTrip && (
           <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm">
@@ -103,11 +105,23 @@ export function App() {
           </div>
         )}
         {tab === 'budget' && store.activeTrip && (
-          <BudgetView trip={store.activeTrip} />
+          <BudgetView trip={store.activeTrip} exchangeRates={store.state.settings.exchangeRates} />
         )}
         {tab === 'budget' && !store.activeTrip && (
           <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm">
             Select a trip to view budget
+          </div>
+        )}
+        {tab === 'split' && store.activeTrip && (
+          <SplitView
+            trip={store.activeTrip}
+            exchangeRates={store.state.settings.exchangeRates}
+            onUpdateTrip={(updates) => store.updateTrip(store.activeTrip!.id, updates)}
+          />
+        )}
+        {tab === 'split' && !store.activeTrip && (
+          <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm">
+            Select a trip to manage split expenses
           </div>
         )}
         {tab === 'io' && (
@@ -121,6 +135,7 @@ export function App() {
         <MobileTab icon={<CalendarDays size={20} />} label="Itinerary" active={tab === 'itinerary'} onClick={() => setTab('itinerary')} />
         <MobileTab icon={<MapPin size={20} />} label="Map" active={tab === 'map'} onClick={() => setTab('map')} />
         <MobileTab icon={<DollarSign size={20} />} label="Budget" active={tab === 'budget'} onClick={() => setTab('budget')} />
+        <MobileTab icon={<Users size={20} />} label="Split" active={tab === 'split'} onClick={() => setTab('split')} />
         <MobileTab icon={<Printer size={20} />} label="Print" active={false} onClick={() => setShowPrint(true)} />
         <MobileTab icon={<FolderDown size={20} />} label="I/O" active={tab === 'io'} onClick={() => setTab('io')} />
       </nav>

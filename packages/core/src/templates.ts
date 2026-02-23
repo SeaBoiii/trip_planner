@@ -8,7 +8,7 @@ export function builtInTemplates(): Template[] {
       name: 'City Weekend',
       description: 'A quick 2-day city break with sightseeing, food & nightlife',
       builtIn: true,
-      currency: 'SGD',
+      baseCurrency: 'SGD',
       days: [
         {
           label: 'Day 1 — Arrival & Explore',
@@ -35,7 +35,7 @@ export function builtInTemplates(): Template[] {
       name: 'Road Trip',
       description: '3-day road trip with driving legs, stops & camping',
       builtIn: true,
-      currency: 'SGD',
+      baseCurrency: 'SGD',
       days: [
         {
           label: 'Day 1 — Hit the Road',
@@ -70,7 +70,7 @@ export function builtInTemplates(): Template[] {
       name: 'Business Trip',
       description: 'Structured 2-day trip with meetings, meals & downtime',
       builtIn: true,
-      currency: 'USD',
+      baseCurrency: 'USD',
       days: [
         {
           label: 'Day 1 — Meetings',
@@ -97,7 +97,7 @@ export function builtInTemplates(): Template[] {
       name: 'Theme Park Day',
       description: 'Full-day theme park itinerary with rides, shows & meals',
       builtIn: true,
-      currency: 'SGD',
+      baseCurrency: 'SGD',
       days: [
         {
           label: 'Theme Park Day',

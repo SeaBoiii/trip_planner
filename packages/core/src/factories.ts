@@ -1,12 +1,14 @@
 import { nanoid } from './utils';
 import type { Trip, Day, Item } from './types';
 
-export function createNewTrip(name: string, currency = 'SGD'): Trip {
+export function createNewTrip(name: string, baseCurrency = 'SGD'): Trip {
   const now = new Date().toISOString();
   return {
     id: nanoid(),
     name,
-    currency,
+    baseCurrency,
+    participants: [],
+    defaultTravelMode: 'walk',
     days: [],
     createdAt: now,
     updatedAt: now,
@@ -27,6 +29,7 @@ export function createNewItem(title: string, partial?: Partial<Omit<Item, 'id' |
     id: nanoid(),
     title,
     tags: [],
+    attachments: [],
     ...partial,
   };
 }

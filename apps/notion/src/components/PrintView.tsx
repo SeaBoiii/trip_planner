@@ -29,7 +29,7 @@ export function PrintView({ trip, onClose }: PrintViewProps) {
         </p>
       )}
       <p className="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-6">
-        Total: {formatCurrency(tripTotal(trip.days), trip.currency)}
+        Total: {formatCurrency(tripTotal(trip.days), trip.baseCurrency)}
       </p>
 
       {trip.days.map((day) => (
@@ -38,7 +38,7 @@ export function PrintView({ trip, onClose }: PrintViewProps) {
             <h2 className="text-base font-semibold text-gray-800 dark:text-gray-200">
               {day.label}{day.date ? ` — ${day.date}` : ''}
             </h2>
-            <span className="text-sm text-gray-600 dark:text-gray-400">{formatCurrency(dayTotal(day.items), trip.currency)}</span>
+            <span className="text-sm text-gray-600 dark:text-gray-400">{formatCurrency(dayTotal(day.items), trip.baseCurrency)}</span>
           </div>
           {day.items.length === 0 && <p className="text-sm text-gray-400 italic">No items</p>}
           <table className="w-full text-sm">
@@ -51,7 +51,7 @@ export function PrintView({ trip, onClose }: PrintViewProps) {
                     <td className="py-1 pr-2 text-gray-500 dark:text-gray-400">{item.time ?? ''}</td>
                     <td className="py-1 pr-2 text-gray-500 dark:text-gray-400">{locationLabel ?? ''}</td>
                     <td className="py-1 text-right text-gray-600 dark:text-gray-400">
-                      {item.cost != null ? formatCurrency(item.cost, trip.currency) : ''}
+                      {item.cost ? formatCurrency(item.cost.amount, item.cost.currency) : ''}
                     </td>
                   </tr>
                 );

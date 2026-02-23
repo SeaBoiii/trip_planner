@@ -1,12 +1,24 @@
 import React, { useState } from 'react';
 import type { Trip, Day, Item } from '@trip-planner/core';
-import { formatCurrency, dayTotal, tripTotal } from '@trip-planner/core';
+import {
+  buildAppleTransitLink,
+  buildGoogleTransitLink,
+  computeTravelSegment,
+  formatCurrency,
+  dayTotal,
+  estimateTravelDurationSeconds,
+  haversineDistanceMeters,
+  tripTotal,
+  type TravelMode,
+  type TravelSegmentComputation,
+} from '@trip-planner/core';
 import { Button, Input, Modal, ConfirmDialog, EmptyState, toast } from '@trip-planner/ui';
-import { Plus, Trash2, ChevronDown, ChevronRight, Settings, CalendarDays, ArrowUpDown, Check, ArrowRightLeft } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Settings, CalendarDays, ArrowUpDown, Check, ArrowRightLeft, Route } from 'lucide-react';
 import { ItemRow } from './ItemRow';
 import { ItemForm } from './ItemForm';
 import { TripSettings } from './TripSettings';
 import { MoveToModal } from './MoveToModal';
+import { TravelSegmentRow } from './TravelSegmentRow';
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -26,6 +38,7 @@ export function Itinerary({ trip, store }: ItineraryProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [reorderMode, setReorderMode] = useState(false);
   const [moveTarget, setMoveTarget] = useState<{ dayId: string; item: Item } | null>(null);
+  const [travelSegments, setTravelSegments] = useState<Record<string, { status: 'idle' | 'loading' | 'done'; data?: TravelSegmentComputation }>>({});
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -107,6 +120,53 @@ export function Itinerary({ trip, store }: ItineraryProps) {
     setMoveTarget(null);
   };
 
+  const activeTravelMode: TravelMode = trip.defaultTravelMode ?? 'walk';
+  const routingSettings = store.state.settings.routing;
+
+  const getTravelSegmentKey = (dayId: string, fromItemId: string, toItemId: string) =>
+    `${dayId}:${fromItemId}:${toItemId}:${routingSettings.providerId}:${activeTravelMode}`;
+
+  const computeSegment = async (dayId: string, fromItem: Item, toItem: Item, force = false) => {
+    if (!fromItem.location || !toItem.location) return;
+    const key = getTravelSegmentKey(dayId, fromItem.id, toItem.id);
+    setTravelSegments((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] ?? {}), status: 'loading' },
+    }));
+
+    const result = await computeTravelSegment({
+      providerId: routingSettings.providerId,
+      from: [fromItem.location.lon, fromItem.location.lat],
+      to: [toItem.location.lon, toItem.location.lat],
+      mode: activeTravelMode,
+      apiKey: routingSettings.openrouteserviceApiKey,
+      ttlMs: routingSettings.routeCacheTtlMs,
+      force,
+    });
+
+    setTravelSegments((prev) => ({
+      ...prev,
+      [key]: { status: 'done', data: result },
+    }));
+  };
+
+  const computeDayTravel = async (day: Day) => {
+    const pairs: Array<[Item, Item]> = [];
+    for (let index = 0; index < day.items.length - 1; index += 1) {
+      const fromItem = day.items[index];
+      const toItem = day.items[index + 1];
+      if (fromItem.location && toItem.location) {
+        pairs.push([fromItem, toItem]);
+      }
+    }
+    for (const [fromItem, toItem] of pairs) {
+      await computeSegment(day.id, fromItem, toItem);
+    }
+    if (pairs.length > 0) {
+      toast(`Computed travel for ${pairs.length} segment${pairs.length === 1 ? '' : 's'}`);
+    }
+  };
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-4">
       {/* Trip header */}
@@ -120,8 +180,27 @@ export function Itinerary({ trip, store }: ItineraryProps) {
             </p>
           )}
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Total: {formatCurrency(tripTotal(trip.days), trip.currency)}
+            Total: {formatCurrency(tripTotal(trip.days), trip.baseCurrency)}
           </p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 no-print">
+            <span className="text-xs text-gray-500 dark:text-gray-400 inline-flex items-center gap-1">
+              <Route size={12} /> Travel mode
+            </span>
+            {(['walk', 'drive', 'transit'] as TravelMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => store.updateTrip(trip.id, { defaultTravelMode: mode })}
+                className={`rounded-full px-2 py-0.5 text-xs border transition-colors ${
+                  activeTravelMode === mode
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700'
+                }`}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex gap-2 no-print">
           {trip.days.some((d) => d.items.length > 0) && (
@@ -160,6 +239,10 @@ export function Itinerary({ trip, store }: ItineraryProps) {
         <div className="flex flex-col gap-3">
           {trip.days.map((day) => {
             const isExpanded = expandedDays.has(day.id);
+            const travelPairCount = day.items.reduce((count, item, index) => {
+              const next = day.items[index + 1];
+              return count + (item.location && next?.location ? 1 : 0);
+            }, 0);
             return (
               <div key={day.id} className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800">
                 {/* Day header */}
@@ -173,8 +256,20 @@ export function Itinerary({ trip, store }: ItineraryProps) {
                     {day.date && <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">{day.date}</span>}
                   </div>
                   <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                    {formatCurrency(dayTotal(day.items), trip.currency)}
+                    {formatCurrency(dayTotal(day.items), trip.baseCurrency)}
                   </span>
+                  {!reorderMode && travelPairCount > 0 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void computeDayTravel(day);
+                      }}
+                      className="px-2 py-1 rounded text-xs text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 no-print"
+                      title="Compute travel for this day"
+                    >
+                      Travel
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -191,20 +286,70 @@ export function Itinerary({ trip, store }: ItineraryProps) {
                 {isExpanded && (
                   <div className="border-t border-gray-100 dark:border-gray-700">
                     <SortableContext items={day.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-                      {day.items.map((item, index) => (
-                        <SortableItem
-                          key={item.id}
-                          item={item}
-                          dayId={day.id}
-                          index={index}
-                          currency={trip.currency}
-                          reorderMode={reorderMode}
-                          showMoveTo={trip.days.length > 1}
-                          onEdit={() => setEditingItem({ dayId: day.id, item })}
-                          onDelete={() => setDeleteTarget({ type: 'item', dayId: day.id, itemId: item.id })}
-                          onMoveTo={() => setMoveTarget({ dayId: day.id, item })}
-                        />
-                      ))}
+                      {day.items.map((item, index) => {
+                        const nextItem = day.items[index + 1];
+                        const segmentKey =
+                          item.location && nextItem?.location
+                            ? getTravelSegmentKey(day.id, item.id, nextItem.id)
+                            : null;
+                        const segmentState = segmentKey ? travelSegments[segmentKey] : undefined;
+
+                        return (
+                          <React.Fragment key={item.id}>
+                            <SortableItem
+                              item={item}
+                              dayId={day.id}
+                              index={index}
+                              baseCurrency={trip.baseCurrency}
+                              exchangeRates={store.state.settings.exchangeRates}
+                              reorderMode={reorderMode}
+                              showMoveTo={trip.days.length > 1}
+                              onEdit={() => setEditingItem({ dayId: day.id, item })}
+                              onDelete={() => setDeleteTarget({ type: 'item', dayId: day.id, itemId: item.id })}
+                              onMoveTo={() => setMoveTarget({ dayId: day.id, item })}
+                            />
+                            {!reorderMode && item.location && nextItem?.location && (
+                              (() => {
+                                const fallbackDistance = haversineDistanceMeters(
+                                  [item.location.lon, item.location.lat],
+                                  [nextItem.location.lon, nextItem.location.lat]
+                                );
+                                const fallbackData = segmentState?.data ?? {
+                                  fallbackDistanceMeters: fallbackDistance,
+                                  fallbackDurationSeconds: estimateTravelDurationSeconds(fallbackDistance, activeTravelMode),
+                                };
+                                return (
+                              <TravelSegmentRow
+                                mode={activeTravelMode}
+                                status={segmentState?.status ?? 'idle'}
+                                data={fallbackData}
+                                onCompute={() => {
+                                  void computeSegment(day.id, item, nextItem);
+                                }}
+                                onRetry={() => {
+                                  void computeSegment(day.id, item, nextItem, true);
+                                }}
+                                transitLinks={
+                                  activeTravelMode === 'transit'
+                                    ? {
+                                        google: buildGoogleTransitLink(
+                                          [item.location.lon, item.location.lat],
+                                          [nextItem.location.lon, nextItem.location.lat]
+                                        ),
+                                        apple: buildAppleTransitLink(
+                                          [item.location.lon, item.location.lat],
+                                          [nextItem.location.lon, nextItem.location.lat]
+                                        ),
+                                      }
+                                    : undefined
+                                }
+                              />
+                                );
+                              })()
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                     </SortableContext>
                     {day.items.length === 0 && (
                       <p className="px-3 py-4 text-sm text-gray-400 dark:text-gray-500 text-center">No items yet</p>
@@ -267,6 +412,10 @@ export function Itinerary({ trip, store }: ItineraryProps) {
           open
           dayId={editingItem.dayId}
           item={editingItem.item}
+          defaultCurrency={trip.baseCurrency}
+          tripBaseCurrency={trip.baseCurrency}
+          participants={trip.participants}
+          exchangeRates={store.state.settings.exchangeRates}
           geocodingProviderEndpoint={store.state.settings.geocodingProviderEndpoint}
           onSave={handleSaveItem}
           onPatchItem={(dayId, itemId, updates) => store.updateItem(trip.id, dayId, itemId, updates)}
@@ -291,11 +440,11 @@ export function Itinerary({ trip, store }: ItineraryProps) {
       <TripSettings
         open={showSettings}
         trip={trip}
+        settings={store.state.settings}
         onClose={() => setShowSettings(false)}
         onUpdate={(updates) => store.updateTrip(trip.id, updates)}
         theme={store.state.settings.theme}
         onThemeChange={store.setTheme}
-        geocodingProviderEndpoint={store.state.settings.geocodingProviderEndpoint}
         onUpdateSettings={store.updateSettings}
       />
 
@@ -313,11 +462,12 @@ export function Itinerary({ trip, store }: ItineraryProps) {
 }
 
 // Sortable item wrapper
-function SortableItem({ item, dayId, index, currency, reorderMode, showMoveTo, onEdit, onDelete, onMoveTo }: {
+function SortableItem({ item, dayId, index, baseCurrency, exchangeRates, reorderMode, showMoveTo, onEdit, onDelete, onMoveTo }: {
   item: Item;
   dayId: string;
   index: number;
-  currency: string;
+  baseCurrency: string;
+  exchangeRates: import('@trip-planner/core').ExchangeRatesState;
   reorderMode: boolean;
   showMoveTo: boolean;
   onEdit: () => void;
@@ -340,7 +490,8 @@ function SortableItem({ item, dayId, index, currency, reorderMode, showMoveTo, o
     <div ref={setNodeRef} style={style}>
       <ItemRow
         item={item}
-        currency={currency}
+        baseCurrency={baseCurrency}
+        exchangeRates={exchangeRates}
         onEdit={onEdit}
         onDelete={onDelete}
         onMoveTo={showMoveTo ? onMoveTo : undefined}

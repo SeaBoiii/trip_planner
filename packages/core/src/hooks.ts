@@ -33,11 +33,14 @@ export function useTripStore() {
   }, []);
 
   // Trip actions
-  const createTrip = useCallback((name: string, currency?: string) => {
-    dispatch((s) => ops.createTrip(s, name, currency));
+  const createTrip = useCallback((name: string, baseCurrency?: string) => {
+    dispatch((s) => ops.createTrip(s, name, baseCurrency));
   }, [dispatch]);
 
-  const updateTrip = useCallback((tripId: string, updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'currency' | 'coverPhoto'>>) => {
+  const updateTrip = useCallback((
+    tripId: string,
+    updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'baseCurrency' | 'coverPhoto' | 'participants' | 'defaultTravelMode'>>
+  ) => {
     dispatch((s) => ops.updateTrip(s, tripId, updates));
   }, [dispatch]);
 

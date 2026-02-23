@@ -4,8 +4,8 @@ import type { AppState, Trip, Day, Item, Template, ThemePreference, AppSettings 
 
 // ── Trip Operations ──
 
-export function createTrip(state: AppState, name: string, currency = 'SGD'): AppState {
-  const trip = createNewTrip(name, currency);
+export function createTrip(state: AppState, name: string, baseCurrency = 'SGD'): AppState {
+  const trip = createNewTrip(name, baseCurrency);
   return {
     ...state,
     trips: [...state.trips, trip],
@@ -13,7 +13,11 @@ export function createTrip(state: AppState, name: string, currency = 'SGD'): App
   };
 }
 
-export function updateTrip(state: AppState, tripId: string, updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'currency' | 'coverPhoto'>>): AppState {
+export function updateTrip(
+  state: AppState,
+  tripId: string,
+  updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'baseCurrency' | 'coverPhoto' | 'participants' | 'defaultTravelMode'>>
+): AppState {
   return {
     ...state,
     trips: state.trips.map((t) =>
@@ -170,11 +174,11 @@ export function saveAsTemplate(state: AppState, tripId: string, templateName: st
     name: templateName,
     description,
     builtIn: false,
-    currency: trip.currency,
+    baseCurrency: trip.baseCurrency,
     days: trip.days.map((d) => ({
       label: d.label,
-      items: d.items.map(({ title, time, locationText, location, notes, cost, tags, link }) => ({
-        title, time, locationText, location, notes, cost, tags, link,
+      items: d.items.map(({ title, time, locationText, location, notes, cost, attachments, payment, tags, link }) => ({
+        title, time, locationText, location, notes, cost, attachments, payment, tags, link,
       })),
     })),
     createdAt: new Date().toISOString(),
@@ -187,7 +191,7 @@ export function deleteTemplate(state: AppState, templateId: string): AppState {
 }
 
 export function createTripFromTemplate(state: AppState, template: Template, tripName: string): AppState {
-  const trip = createNewTrip(tripName, template.currency);
+  const trip = createNewTrip(tripName, template.baseCurrency);
   trip.days = template.days.map((dt) => {
     const day = createNewDay(dt.label);
     day.items = dt.items.map((it) => createNewItem(it.title, {
@@ -196,6 +200,8 @@ export function createTripFromTemplate(state: AppState, template: Template, trip
       location: it.location,
       notes: it.notes,
       cost: it.cost,
+      attachments: it.attachments,
+      payment: it.payment,
       tags: it.tags ?? [],
       link: it.link,
     }));
@@ -211,7 +217,26 @@ export function createTripFromTemplate(state: AppState, template: Template, trip
 // ── Settings Operations ──
 
 export function updateSettings(state: AppState, updates: Partial<AppSettings>): AppState {
-  return { ...state, settings: { ...state.settings, ...updates } };
+  return {
+    ...state,
+    settings: {
+      ...state.settings,
+      ...updates,
+      routing: updates.routing ? { ...state.settings.routing, ...updates.routing } : state.settings.routing,
+      exchangeRates: updates.exchangeRates
+        ? {
+            ...state.settings.exchangeRates,
+            ...updates.exchangeRates,
+            rates: updates.exchangeRates.rates
+              ? { ...state.settings.exchangeRates.rates, ...updates.exchangeRates.rates }
+              : state.settings.exchangeRates.rates,
+            manualOverrides: updates.exchangeRates.manualOverrides
+              ? { ...state.settings.exchangeRates.manualOverrides, ...updates.exchangeRates.manualOverrides }
+              : state.settings.exchangeRates.manualOverrides,
+          }
+        : state.settings.exchangeRates,
+    },
+  };
 }
 
 export function setTheme(state: AppState, theme: ThemePreference): AppState {

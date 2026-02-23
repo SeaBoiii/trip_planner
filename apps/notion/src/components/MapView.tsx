@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { Item, Trip } from '@trip-planner/core';
+import type { AppSettings, Item, RouteResult, TravelMode, Trip } from '@trip-planner/core';
 import { EmptyState, Button } from '@trip-planner/ui';
-import { MapContainer, TileLayer, CircleMarker, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, CircleMarker, Polyline, useMap } from 'react-leaflet';
 import { latLngBounds } from 'leaflet';
-import { CalendarDays, ExternalLink, MapPin } from 'lucide-react';
+import { CalendarDays, ExternalLink, MapPin, Route, Loader2 } from 'lucide-react';
 import { getItemLocationLabel, getOpenStreetMapViewUrl } from '../lib/location';
+import { computeTravelSegment, getCachedRouteByArgs, routeGeometryToLatLngs } from '@trip-planner/core';
 
 interface MapViewProps {
   trip: Trip;
+  settings: AppSettings;
   onOpenItinerary?: () => void;
 }
 
@@ -21,6 +23,13 @@ interface PinnedItem {
   item: Item;
   lat: number;
   lon: number;
+}
+
+interface RoutePair {
+  key: string;
+  dayId: string;
+  fromItem: Item;
+  toItem: Item;
 }
 
 function collectPinnedItems(trip: Trip): PinnedItem[] {
@@ -40,6 +49,25 @@ function collectPinnedItems(trip: Trip): PinnedItem[] {
     }
   }
   return pins;
+}
+
+function collectRoutePairs(trip: Trip, dayFilter: DayFilter): RoutePair[] {
+  const pairs: RoutePair[] = [];
+  for (const day of trip.days) {
+    if (dayFilter !== 'all' && day.id !== dayFilter) continue;
+    for (let index = 0; index < day.items.length - 1; index += 1) {
+      const fromItem = day.items[index];
+      const toItem = day.items[index + 1];
+      if (!fromItem.location || !toItem.location) continue;
+      pairs.push({
+        key: `${day.id}:${fromItem.id}:${toItem.id}`,
+        dayId: day.id,
+        fromItem,
+        toItem,
+      });
+    }
+  }
+  return pairs;
 }
 
 function FitMapToPins({ pins }: { pins: PinnedItem[] }) {
@@ -63,13 +91,18 @@ function FitMapToPins({ pins }: { pins: PinnedItem[] }) {
   return null;
 }
 
-export function MapView({ trip, onOpenItinerary }: MapViewProps) {
+export function MapView({ trip, settings, onOpenItinerary }: MapViewProps) {
   const [dayFilter, setDayFilter] = useState<DayFilter>('all');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [showRoutes, setShowRoutes] = useState(false);
+  const [routeSegments, setRouteSegments] = useState<Record<string, RouteResult | null>>({});
+  const [routesLoading, setRoutesLoading] = useState(false);
 
   useEffect(() => {
     setDayFilter('all');
     setSelectedKey(null);
+    setShowRoutes(settings.routing.showRoutesOnMapByDefault);
+    setRouteSegments({});
   }, [trip.id]);
 
   const allPins = useMemo(() => collectPinnedItems(trip), [trip]);
@@ -77,6 +110,8 @@ export function MapView({ trip, onOpenItinerary }: MapViewProps) {
     () => (dayFilter === 'all' ? allPins : allPins.filter((pin) => pin.dayId === dayFilter)),
     [allPins, dayFilter]
   );
+  const routePairs = useMemo(() => collectRoutePairs(trip, dayFilter), [trip, dayFilter]);
+  const activeTravelMode: TravelMode = trip.defaultTravelMode ?? 'walk';
 
   useEffect(() => {
     if (!selectedKey) return;
@@ -84,6 +119,60 @@ export function MapView({ trip, onOpenItinerary }: MapViewProps) {
       setSelectedKey(null);
     }
   }, [selectedKey, visiblePins]);
+
+  useEffect(() => {
+    if (!showRoutes || routePairs.length === 0) return;
+    let cancelled = false;
+    const providerId = settings.routing.providerId;
+    const mode = activeTravelMode;
+
+    Promise.all(
+      routePairs.map(async (pair) => {
+        if (!pair.fromItem.location || !pair.toItem.location) return [pair.key, null] as const;
+        const cached = await getCachedRouteByArgs({
+          providerId,
+          mode,
+          from: [pair.fromItem.location.lon, pair.fromItem.location.lat],
+          to: [pair.toItem.location.lon, pair.toItem.location.lat],
+        });
+        return [pair.key, cached] as const;
+      })
+    ).then((entries) => {
+      if (cancelled) return;
+      setRouteSegments((prev) => ({
+        ...prev,
+        ...Object.fromEntries(entries),
+      }));
+    }).catch(() => {
+      // Ignore cache peek failures.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showRoutes, routePairs, settings.routing.providerId, activeTravelMode]);
+
+  const computeVisibleRoutes = async () => {
+    setRoutesLoading(true);
+    try {
+      for (const pair of routePairs) {
+        if (!pair.fromItem.location || !pair.toItem.location) continue;
+        const computed = await computeTravelSegment({
+          providerId: settings.routing.providerId,
+          mode: activeTravelMode,
+          from: [pair.fromItem.location.lon, pair.fromItem.location.lat],
+          to: [pair.toItem.location.lon, pair.toItem.location.lat],
+          apiKey: settings.routing.openrouteserviceApiKey,
+          ttlMs: settings.routing.routeCacheTtlMs,
+        });
+        if (computed.route) {
+          setRouteSegments((prev) => ({ ...prev, [pair.key]: computed.route ?? null }));
+        }
+      }
+    } finally {
+      setRoutesLoading(false);
+    }
+  };
 
   const selectedPin = visiblePins.find((pin) => pin.key === selectedKey) ?? null;
 
@@ -137,6 +226,17 @@ export function MapView({ trip, onOpenItinerary }: MapViewProps) {
               {day.label}
             </button>
           ))}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <input type="checkbox" checked={showRoutes} onChange={(e) => setShowRoutes(e.target.checked)} />
+            <Route size={12} /> Show routes
+          </label>
+          {showRoutes && routePairs.length > 0 && (
+            <Button type="button" size="sm" variant="secondary" onClick={() => { void computeVisibleRoutes(); }} disabled={routesLoading}>
+              {routesLoading ? <><Loader2 size={12} className="animate-spin" /> Computing</> : 'Compute visible routes'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -199,6 +299,18 @@ export function MapView({ trip, onOpenItinerary }: MapViewProps) {
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <FitMapToPins pins={visiblePins} />
+                {showRoutes && routePairs.map((pair) => {
+                  const route = routeSegments[pair.key];
+                  const latLngs = route ? routeGeometryToLatLngs(route) : [];
+                  if (latLngs.length < 2) return null;
+                  return (
+                    <Polyline
+                      key={`route:${pair.key}`}
+                      positions={latLngs}
+                      pathOptions={{ color: '#2563eb', weight: 3, opacity: 0.75 }}
+                    />
+                  );
+                })}
                 {visiblePins.map((pin) => {
                   const isSelected = pin.key === selectedKey;
                   return (

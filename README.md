@@ -1,21 +1,25 @@
 # Trip Planner
 
-A mobile-first Trip Planner web app built with React, TypeScript, Vite, and TailwindCSS. It has a Notion-like UI, dark mode, local-first persistence, trip templates, map pins, and location search with OpenStreetMap data sources.
+Mobile-first Trip Planner web app (Notion-like UI) built with React, TypeScript, Vite, and TailwindCSS. Everything runs in-browser and is GitHub Pages friendly (no backend).
 
 ## Quick Start
 
 ```bash
-# Install pnpm if you don't have it
 npm i -g pnpm
-
-# Install dependencies
 pnpm install
-
-# Run dev server
 pnpm dev
+```
 
-# Build for production
+Build:
+
+```bash
 pnpm build
+```
+
+Core tests:
+
+```bash
+pnpm --filter @trip-planner/core test
 ```
 
 ## Project Structure
@@ -23,105 +27,104 @@ pnpm build
 ```text
 trip_planner/
 |- apps/
-|  `- notion/          # Main app (Notion-like UI)
+|  `- notion/          # Main app UI (React/Vite)
 |- packages/
-|  |- core/            # Shared types, state, storage, services, templates
+|  |- core/            # Types, storage/migrations, services, calculations
 |  `- ui/              # Shared UI components
-|- .github/workflows/  # GitHub Pages deployment
-|- pnpm-workspace.yaml
-`- package.json
+`- .github/workflows/  # GitHub Pages deploy
 ```
 
-## Scripts
+## Major Features
 
-| Command | Description |
-|---|---|
-| `pnpm dev` | Start dev server |
-| `pnpm build` | Build for production |
-| `pnpm preview` | Preview production build |
+- Trip/day/item itinerary planning (mobile-first, drag reorder mode)
+- Structured location search (OpenStreetMap Nominatim) + free-text fallback
+- Map view with pins, day filters, opening hours (best effort via Overpass/OSM)
+- Routing/travel segments between consecutive located items:
+  - inline travel rows (distance + duration)
+  - provider-backed route compute (OSRM demo / Valhalla demo / openrouteservice key)
+  - straight-line fallback always available
+  - optional route polylines on map
+- Image attachments per item:
+  - thumbnails in itinerary list
+  - full image lightbox in item editor
+  - stored in IndexedDB (not localStorage)
+- Multi-currency item costs with trip base currency totals
+- Frankfurter exchange-rate fetch + local cache + manual overrides
+- Splitwise-style expense splitting:
+  - participants
+  - paid-by + split method (equal / shares / exact)
+  - net balances + settlement suggestions
+- Import/export:
+  - JSON (trip data only)
+  - ZIP (trip JSON + attachment blobs)
 
-## Features
+## Public APIs / Fair-Use Notes
 
-- Trip management (create, rename, delete, duplicate)
-- Trip templates (built-in + save any trip as a custom template)
-- Day-by-day itinerary editing
-- Itinerary items with time, notes, tags, links, cost, and location support
-- Location search (OpenStreetMap Nominatim) with structured lat/lon storage + free-text fallback
-- Map view (Leaflet + OpenStreetMap tiles) with day filters and pinned itinerary items
-- Best-effort opening hours display from OpenStreetMap `opening_hours` tags (via Overpass API)
-- Mobile-safe drag reordering with explicit reorder mode
-- Move-to fallback modal for cross-day item moves
-- Dark mode (system/light/dark)
-- Budget totals by day and trip
-- JSON export/import with schema migrations
-- Print-friendly trip view
+This app uses public/community endpoints by default. Rate limiting and caching are implemented, but availability can vary.
 
-## Map + Location Data
+- Geocoding: OpenStreetMap Nominatim (debounced + cached + 1 req/sec queue)
+- Opening hours lookup: Overpass API (cached + rate limited)
+- Routing (selectable):
+  - Valhalla demo (default)
+  - OSRM demo
+  - openrouteservice (user-supplied API key, stored locally only)
+- Exchange rates: Frankfurter API (no API key)
 
-- Geocoding search uses OpenStreetMap Nominatim (`nominatim.openstreetmap.org`) by default.
-- Requests are debounced, cached, and rate-limited to 1 request/second to comply with public API usage expectations.
-- Map tiles and markers use OpenStreetMap data and show required attribution in the map UI.
-- Opening hours are fetched best-effort from OSM tags through the Overpass API and parsed with the `opening_hours` package.
-- Opening hours can be missing, unparsable, or outdated; always verify directly with venues for time-sensitive plans.
-- A configurable geocoding endpoint is available in Settings (advanced) for self-hosted/alternate Nominatim endpoints.
+Important:
+
+- GitHub Pages cannot store secrets. Any API key (e.g., openrouteservice) must be entered by the user in Settings and is stored locally only.
+- Public demo routing services should be used sparingly. The UI uses explicit "Compute" actions and caches results.
+
+## Attachments Storage
+
+- Item attachment refs are stored in the main JSON state (`item.attachments`).
+- Image blobs are stored in IndexedDB (`trip_planner` DB, `attachments` store):
+  - thumbnail blob (compressed)
+  - full blob (compressed)
+- JSON exports do not include attachments.
+- ZIP exports include `trip.json` plus `attachments/` blobs and metadata.
+
+## Currency + Split Details
+
+- Trip has a `baseCurrency`.
+- Each item cost is `Money` (`{ amount, currency }`).
+- Budget totals and split calculations convert into the trip base currency using stored exchange rates.
+- Missing exchange rates cause affected items to be excluded from converted totals/split math and surfaced as warnings.
+
+## Data Persistence / Schema
+
+- Main state is stored in `localStorage` under `trip_planner_v1`
+- Route cache and attachments are stored in IndexedDB
+- Current JSON schema version: `4`
+
+Migration coverage includes:
+
+- legacy `item.location` string -> `item.locationText`
+- legacy numeric `item.cost` -> `Money`
+- legacy `trip.currency` -> `trip.baseCurrency`
+- default participants/settings/routing/rates fields
 
 ## Tech Stack
 
-- Vite 5 + React 18 + TypeScript 5
+- React 18 + Vite 5 + TypeScript
 - TailwindCSS
-- `@dnd-kit` (drag and drop)
-- `leaflet` + `react-leaflet` (map view)
-- `opening_hours` (OSM opening hours parsing)
-- `lucide-react` (icons)
-- localStorage with versioned schema migrations
-- pnpm workspaces monorepo
-
-## Data Persistence
-
-All data is stored in `localStorage` under the key `trip_planner_v1` with a versioned schema:
-
-```json
-{
-  "version": 3,
-  "data": {
-    "trips": [...],
-    "activeTripId": "...",
-    "templates": [...],
-    "settings": {
-      "theme": "system",
-      "geocodingProviderEndpoint": "https://nominatim.openstreetmap.org"
-    }
-  }
-}
-```
-
-Migration notes:
-
-- Existing legacy item `location` strings are migrated to `locationText`.
-- Structured locations are stored in `item.location` with coordinates and OSM references.
+- `leaflet` + `react-leaflet`
+- `opening_hours`
+- `@dnd-kit`
+- `jszip`
+- IndexedDB + localStorage
 
 ## Deploy to GitHub Pages
 
-1. Push to the `main` branch
-2. Go to GitHub repository Settings -> Pages -> Source -> GitHub Actions
-3. The workflow builds and deploys to `/<repo>/`
+1. Push to `main`
+2. Enable GitHub Actions deployment in repository Pages settings
+3. Workflow builds and publishes the app
 
-## Mobile-First Design
+## Notes / Limitations
 
-- Primary target: phone screens (roughly 360-430px)
-- Responsive desktop layout with sidebar + map/list split on larger screens
-- Touch-friendly drag handles and bottom navigation
-- iOS safe-area padding support
-
-## Future Roadmap
-
-- [ ] Day reordering via drag and drop
-- [ ] Routing / travel time / distance
-- [ ] PWA / offline support
-- [ ] Image attachments per item
-- [ ] Multi-currency conversion
-- [ ] Checklist items (packing list)
-- [ ] Collaborative editing
+- Transit routing is provider-dependent. If unavailable, transit rows fall back to straight-line estimates plus deep links to Maps apps.
+- Opening hours and map/routing data come from OSM-related sources and may be incomplete/outdated.
+- Large image libraries increase IndexedDB usage and ZIP export size.
 
 ## License
 

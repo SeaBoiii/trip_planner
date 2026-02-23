@@ -11,11 +11,21 @@ export type {
   ItemTemplate,
   ThemePreference,
   AppSettings,
+  ExchangeRatesState,
+  RoutingSettings,
+  RoutingProviderId,
+  TravelMode,
+  Money,
   Location,
   LocationSource,
   OSMRef,
   OSMType,
   LocationOpeningHours,
+  Attachment,
+  ItemAttachmentRef,
+  Participant,
+  ItemPayment,
+  ItemPaymentSplit,
 } from './types';
 
 export {
@@ -47,12 +57,13 @@ export {
   defaultState,
   defaultSettings,
   CURRENT_VERSION,
+  DEFAULT_ROUTE_CACHE_TTL_MS,
   STORAGE_KEY,
 } from './storage';
 
 export { createNewTrip, createNewDay, createNewItem } from './factories';
 
-export { nanoid, deepClone, dayTotal, tripTotal, formatCurrency, CURRENCIES } from './utils';
+export { nanoid, deepClone, dayTotal, tripTotal, moneyAmount, formatCurrency, formatMoney, CURRENCIES } from './utils';
 
 export { useTripStore } from './hooks';
 
@@ -71,3 +82,56 @@ export {
   type OsmOpeningHoursDetails,
   type FetchOpeningHoursOptions,
 } from './services/osmDetails';
+
+export {
+  processImageAttachmentFile,
+  saveAttachmentRecord,
+  getAttachmentRecord,
+  getAttachmentThumbBlob,
+  getAttachmentFullBlob,
+  deleteAttachmentRecord,
+  getAllAttachmentRecords,
+  getAttachmentRecordsByIds,
+  type AttachmentBlobRecord,
+} from './services/attachments';
+
+export {
+  fetchExchangeRates,
+  FRANKFURTER_ENDPOINT,
+  convertAmount,
+  convertMoney,
+  convertMoneyToBase,
+  getEffectiveRates,
+  canConvertCurrency,
+  convertItemCostToBase,
+  summarizeDayCostsInBase,
+  summarizeTripCostsInBase,
+} from './services/exchangeRates';
+
+export {
+  getRoutingProviders,
+  getRoutingProviderById,
+  getRouteWithCache,
+  computeTravelSegment,
+  haversineDistanceMeters,
+  estimateTravelDurationSeconds,
+  getTravelFallback,
+  clearRoutingCache,
+  getCachedRouteByArgs,
+  buildGoogleTransitLink,
+  buildAppleTransitLink,
+  routeGeometryToLatLngs,
+  decodePolyline6,
+  buildRouteCacheKey,
+  type RouteResult,
+  type RoutingProvider,
+  type TravelSegmentComputation,
+} from './services/routing';
+
+export {
+  computeSplitBalances,
+  suggestSettlements,
+  type SplitComputationResult,
+  type ParticipantBalance,
+  type SettlementTransfer,
+} from './services/splitwise';

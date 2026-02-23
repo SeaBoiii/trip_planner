@@ -1,12 +1,14 @@
 import React from 'react';
-import type { Item } from '@trip-planner/core';
-import { formatCurrency } from '@trip-planner/core';
-import { Clock, MapPin, GripVertical, ExternalLink, Tag, ArrowRightLeft } from 'lucide-react';
+import type { ExchangeRatesState, Item } from '@trip-planner/core';
+import { convertItemCostToBase, formatCurrency } from '@trip-planner/core';
+import { Clock, MapPin, GripVertical, ExternalLink, Tag, ArrowRightLeft, Image as ImageIcon } from 'lucide-react';
 import { getItemLocationLabel } from '../lib/location';
+import { AttachmentThumbs } from './AttachmentThumbs';
 
 interface ItemRowProps {
   item: Item;
-  currency: string;
+  baseCurrency: string;
+  exchangeRates?: ExchangeRatesState;
   onEdit: () => void;
   onDelete: () => void;
   onMoveTo?: () => void;
@@ -14,8 +16,11 @@ interface ItemRowProps {
   dragHandleProps?: Record<string, unknown>;
 }
 
-export function ItemRow({ item, currency, onEdit, onDelete, onMoveTo, reorderMode, dragHandleProps }: ItemRowProps) {
+export function ItemRow({ item, baseCurrency, exchangeRates, onEdit, onDelete, onMoveTo, reorderMode, dragHandleProps }: ItemRowProps) {
   const locationLabel = getItemLocationLabel(item);
+  const convertedToBase = item.cost && exchangeRates
+    ? convertItemCostToBase(item, baseCurrency, exchangeRates)
+    : null;
 
   return (
     <div className="flex items-start gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors group border-b border-gray-50 dark:border-gray-700 last:border-b-0">
@@ -64,10 +69,21 @@ export function ItemRow({ item, currency, onEdit, onDelete, onMoveTo, reorderMod
                 {item.tags.join(', ')}
               </span>
             )}
+            {!!item.attachments?.length && (
+              <span className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
+                <ImageIcon size={11} />
+                {item.attachments.length}
+              </span>
+            )}
           </div>
         )}
         {!reorderMode && item.notes && (
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 line-clamp-1">{item.notes}</p>
+        )}
+        {!reorderMode && !!item.attachments?.length && (
+          <div className="mt-1">
+            <AttachmentThumbs attachments={item.attachments} maxCount={3} size="tiny" />
+          </div>
         )}
       </div>
 
@@ -84,10 +100,17 @@ export function ItemRow({ item, currency, onEdit, onDelete, onMoveTo, reorderMod
       )}
 
       {/* Cost */}
-      {!reorderMode && item.cost != null && item.cost > 0 && (
-        <span className="text-xs font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap mt-0.5">
-          {formatCurrency(item.cost, currency)}
-        </span>
+      {!reorderMode && item.cost != null && item.cost.amount > 0 && (
+        <div className="text-right whitespace-nowrap mt-0.5">
+          <div className="text-xs font-medium text-gray-600 dark:text-gray-400">
+            {formatCurrency(item.cost.amount, item.cost.currency)}
+          </div>
+          {item.cost.currency !== baseCurrency && convertedToBase != null && (
+            <div className="text-[10px] text-gray-400 dark:text-gray-500">
+              {formatCurrency(convertedToBase, baseCurrency)}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

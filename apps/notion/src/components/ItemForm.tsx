@@ -1,20 +1,34 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  CURRENCIES,
+  convertAmount,
+  deleteAttachmentRecord,
   fetchOpeningHours,
+  formatCurrency,
+  processImageAttachmentFile,
+  saveAttachmentRecord,
   searchPlaces,
+  type ExchangeRatesState,
   type GeocodingSearchResult,
   type Item,
+  type ItemAttachmentRef,
   type Location,
+  type Participant,
 } from '@trip-planner/core';
 import opening_hours from 'opening_hours';
-import { Button, Input, TextArea, Modal } from '@trip-planner/ui';
-import { ExternalLink, Info, Loader2, MapPin, Search, X } from 'lucide-react';
+import { Button, Input, TextArea, Modal, Select } from '@trip-planner/ui';
+import { ExternalLink, Image as ImageIcon, Info, Loader2, MapPin, Plus, Search, X } from 'lucide-react';
 import { getOpenStreetMapViewUrl, toStructuredLocation } from '../lib/location';
+import { AttachmentLightbox, AttachmentThumbs } from './AttachmentThumbs';
 
 interface ItemFormProps {
   open: boolean;
   dayId: string;
   item?: Item;
+  defaultCurrency: string;
+  tripBaseCurrency: string;
+  participants: Participant[];
+  exchangeRates: ExchangeRatesState;
   geocodingProviderEndpoint?: string;
   onSave: (dayId: string, data: Partial<Item> & { title: string }, itemId?: string) => void;
   onClose: () => void;
@@ -91,6 +105,10 @@ export function ItemForm({
   open,
   dayId,
   item,
+  defaultCurrency,
+  tripBaseCurrency,
+  participants,
+  exchangeRates,
   geocodingProviderEndpoint,
   onSave,
   onClose,
@@ -100,8 +118,19 @@ export function ItemForm({
   const [time, setTime] = useState('');
   const [notes, setNotes] = useState('');
   const [cost, setCost] = useState('');
+  const [costCurrency, setCostCurrency] = useState(defaultCurrency);
   const [tags, setTags] = useState('');
   const [link, setLink] = useState('');
+  const [attachments, setAttachments] = useState<ItemAttachmentRef[]>([]);
+  const [attachmentProcessing, setAttachmentProcessing] = useState(false);
+  const [activeAttachment, setActiveAttachment] = useState<ItemAttachmentRef | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [paymentEnabled, setPaymentEnabled] = useState(false);
+  const [paidByParticipantId, setPaidByParticipantId] = useState('');
+  const [paymentSplitType, setPaymentSplitType] = useState<'equal' | 'shares' | 'exact'>('equal');
+  const [splitParticipantIds, setSplitParticipantIds] = useState<string[]>([]);
+  const [shareInputs, setShareInputs] = useState<Record<string, string>>({});
+  const [exactInputs, setExactInputs] = useState<Record<string, string>>({});
 
   const [locationText, setLocationText] = useState('');
   const [structuredLocation, setStructuredLocation] = useState<Location | undefined>(undefined);
@@ -120,9 +149,35 @@ export function ItemForm({
     setTitle(item?.title ?? '');
     setTime(item?.time ?? '');
     setNotes(item?.notes ?? '');
-    setCost(item?.cost?.toString() ?? '');
+    setCost(item?.cost?.amount?.toString() ?? '');
+    setCostCurrency(item?.cost?.currency ?? defaultCurrency);
     setTags(item?.tags.join(', ') ?? '');
     setLink(item?.link ?? '');
+    setAttachments(item?.attachments ?? []);
+    setAttachmentProcessing(false);
+    setActiveAttachment(null);
+    setPaymentEnabled(!!item?.payment);
+    setPaidByParticipantId(item?.payment?.paidByParticipantId ?? (participants[0]?.id ?? ''));
+    setPaymentSplitType(item?.payment?.split.type ?? 'equal');
+    if (item?.payment?.split.type === 'equal') {
+      setSplitParticipantIds(item.payment.split.participantIds);
+    } else if (item?.payment?.split.type === 'shares') {
+      setSplitParticipantIds(Object.keys(item.payment.split.shares));
+    } else if (item?.payment?.split.type === 'exact') {
+      setSplitParticipantIds(Object.keys(item.payment.split.amounts));
+    } else {
+      setSplitParticipantIds(participants.map((participant) => participant.id));
+    }
+    setShareInputs(
+      item?.payment?.split.type === 'shares'
+        ? Object.fromEntries(Object.entries(item.payment.split.shares).map(([id, share]) => [id, String(share)]))
+        : {}
+    );
+    setExactInputs(
+      item?.payment?.split.type === 'exact'
+        ? Object.fromEntries(Object.entries(item.payment.split.amounts).map(([id, money]) => [id, String(money.amount)]))
+        : {}
+    );
 
     setLocationText(item?.locationText ?? '');
     setStructuredLocation(item?.location);
@@ -137,7 +192,7 @@ export function ItemForm({
     setHoursStatus('idle');
     setHoursError(null);
     setHoursRefreshNonce(0);
-  }, [open, item?.id]);
+  }, [open, item?.id, defaultCurrency, participants]);
 
   const debouncedLocationQuery = useDebouncedValue(locationQuery, 400);
 
@@ -255,13 +310,19 @@ export function ItemForm({
     if (!title.trim()) return;
 
     const parsedCost = cost.trim() ? Number.parseFloat(cost) : undefined;
+    const payment = buildPaymentPayload(parsedCost);
     const data: Partial<Item> & { title: string } = {
       title: title.trim(),
       time: time.trim() || undefined,
       locationText: locationText.trim() || undefined,
       location: structuredLocation,
       notes: notes.trim() || undefined,
-      cost: Number.isFinite(parsedCost ?? NaN) ? parsedCost : undefined,
+      cost:
+        Number.isFinite(parsedCost ?? NaN) && parsedCost != null
+          ? { amount: parsedCost, currency: costCurrency }
+          : undefined,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      payment,
       tags: tags
         ? tags
             .split(',')
@@ -326,6 +387,143 @@ export function ItemForm({
 
   const openingHoursSummary = getOpeningHoursSummary(structuredLocation);
 
+  const handleAttachmentFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setAttachmentProcessing(true);
+    try {
+      const nextRefs: ItemAttachmentRef[] = [];
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith('image/')) continue;
+        const processed = await processImageAttachmentFile(file);
+        await saveAttachmentRecord(processed);
+        nextRefs.push({ id: processed.meta.id, kind: 'image' });
+      }
+      if (nextRefs.length > 0) {
+        setAttachments((prev) => [...prev, ...nextRefs]);
+      }
+    } finally {
+      setAttachmentProcessing(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleRemoveAttachment = async (attachmentId: string) => {
+    setAttachments((prev) => prev.filter((attachment) => attachment.id !== attachmentId));
+    try {
+      await deleteAttachmentRecord(attachmentId);
+    } catch {
+      // Keep UI responsive even if cleanup fails.
+    }
+    if (activeAttachment?.id === attachmentId) {
+      setActiveAttachment(null);
+    }
+  };
+
+  const normalizedSplitParticipantIds = splitParticipantIds.filter((id, index, arr) => !!id && arr.indexOf(id) === index);
+
+  const buildPaymentPayload = (parsedCost: number | undefined): Item['payment'] | undefined => {
+    if (!paymentEnabled || !paidByParticipantId || participants.length === 0) return undefined;
+    if (!Number.isFinite(parsedCost ?? NaN) || parsedCost == null) return undefined;
+    if (normalizedSplitParticipantIds.length === 0) return undefined;
+
+    if (paymentSplitType === 'equal') {
+      return {
+        paidByParticipantId,
+        split: { type: 'equal', participantIds: normalizedSplitParticipantIds },
+      };
+    }
+
+    if (paymentSplitType === 'shares') {
+      const shares: Record<string, number> = {};
+      for (const participantId of normalizedSplitParticipantIds) {
+        const share = Number.parseFloat(shareInputs[participantId] ?? '0');
+        if (Number.isFinite(share) && share > 0) {
+          shares[participantId] = share;
+        }
+      }
+      if (Object.keys(shares).length === 0) return undefined;
+      return {
+        paidByParticipantId,
+        split: { type: 'shares', shares },
+      };
+    }
+
+    const amounts: Record<string, { amount: number; currency: string }> = {};
+    for (const participantId of normalizedSplitParticipantIds) {
+      const amount = Number.parseFloat(exactInputs[participantId] ?? '0');
+      if (Number.isFinite(amount) && amount >= 0) {
+        amounts[participantId] = { amount, currency: costCurrency };
+      }
+    }
+    if (Object.keys(amounts).length === 0) return undefined;
+    return {
+      paidByParticipantId,
+      split: { type: 'exact', amounts },
+    };
+  };
+
+  const paymentPreview = (() => {
+    const parsedCost = Number.parseFloat(cost);
+    if (!paymentEnabled || !Number.isFinite(parsedCost) || parsedCost < 0 || normalizedSplitParticipantIds.length === 0) {
+      return null;
+    }
+    const result: Record<string, { original: number; base: number | null }> = {};
+    if (paymentSplitType === 'equal') {
+      const share = parsedCost / normalizedSplitParticipantIds.length;
+      normalizedSplitParticipantIds.forEach((id, index) => {
+        const original = index === normalizedSplitParticipantIds.length - 1
+          ? parsedCost - share * (normalizedSplitParticipantIds.length - 1)
+          : share;
+        result[id] = {
+          original,
+          base: convertAmount({
+            amount: original,
+            fromCurrency: costCurrency,
+            toCurrency: tripBaseCurrency,
+            exchange: exchangeRates,
+          }),
+        };
+      });
+      return result;
+    }
+    if (paymentSplitType === 'shares') {
+      const shares = normalizedSplitParticipantIds.map((id) => ({
+        id,
+        share: Math.max(0, Number.parseFloat(shareInputs[id] ?? '0') || 0),
+      }));
+      const totalShares = shares.reduce((sum, entry) => sum + entry.share, 0);
+      if (totalShares <= 0) return null;
+      shares.forEach((entry) => {
+        const original = parsedCost * (entry.share / totalShares);
+        result[entry.id] = {
+          original,
+          base: convertAmount({
+            amount: original,
+            fromCurrency: costCurrency,
+            toCurrency: tripBaseCurrency,
+            exchange: exchangeRates,
+          }),
+        };
+      });
+      return result;
+    }
+    normalizedSplitParticipantIds.forEach((id) => {
+      const original = Math.max(0, Number.parseFloat(exactInputs[id] ?? '0') || 0);
+      result[id] = {
+        original,
+        base: convertAmount({
+          amount: original,
+          fromCurrency: costCurrency,
+          toCurrency: tripBaseCurrency,
+          exchange: exchangeRates,
+        }),
+      };
+    });
+    return result;
+  })();
+
   return (
     <Modal open={open} onClose={onClose} title={item ? 'Edit Item' : 'Add Item'}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -349,11 +547,154 @@ export function ItemForm({
             label="Cost"
             type="number"
             step="0.01"
-            min="0"
             placeholder="0.00"
             value={cost}
             onChange={(e) => setCost(e.target.value)}
           />
+        </div>
+        <Select
+          label="Cost Currency"
+          value={costCurrency}
+          onChange={(e) => setCostCurrency(e.target.value)}
+          options={CURRENCIES.map((currency) => ({ value: currency, label: currency }))}
+        />
+
+        <div className="flex flex-col gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Payment / Split</span>
+            <label className="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+              <input
+                type="checkbox"
+                checked={paymentEnabled}
+                onChange={(e) => setPaymentEnabled(e.target.checked)}
+                disabled={participants.length === 0}
+              />
+              Track expense
+            </label>
+          </div>
+
+          {participants.length === 0 && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Add trip participants in the Split tab to track who paid and who owes.
+            </p>
+          )}
+
+          {paymentEnabled && participants.length > 0 && (
+            <div className="space-y-3">
+              <Select
+                label="Paid by"
+                value={paidByParticipantId}
+                onChange={(e) => setPaidByParticipantId(e.target.value)}
+                options={participants.map((participant) => ({ value: participant.id, label: participant.name }))}
+              />
+              <Select
+                label="Split method"
+                value={paymentSplitType}
+                onChange={(e) => setPaymentSplitType(e.target.value as 'equal' | 'shares' | 'exact')}
+                options={[
+                  { value: 'equal', label: 'Equal' },
+                  { value: 'shares', label: 'Shares' },
+                  { value: 'exact', label: 'Exact' },
+                ]}
+              />
+
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Split participants</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {participants.map((participant) => {
+                    const checked = splitParticipantIds.includes(participant.id);
+                    return (
+                      <label key={participant.id} className="flex items-center gap-2 rounded-md border border-gray-200 dark:border-gray-700 px-2 py-1.5 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setSplitParticipantIds((prev) =>
+                              e.target.checked
+                                ? [...prev, participant.id]
+                                : prev.filter((id) => id !== participant.id)
+                            );
+                          }}
+                        />
+                        <span className="text-gray-700 dark:text-gray-300">{participant.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {paymentSplitType === 'shares' && normalizedSplitParticipantIds.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Shares</p>
+                  {normalizedSplitParticipantIds.map((participantId) => {
+                    const participant = participants.find((p) => p.id === participantId);
+                    if (!participant) return null;
+                    return (
+                      <div key={participantId} className="grid grid-cols-[1fr_110px] gap-2 items-center">
+                        <span className="text-xs text-gray-700 dark:text-gray-300">{participant.name}</span>
+                        <Input
+                          value={shareInputs[participantId] ?? '1'}
+                          onChange={(e) => setShareInputs((prev) => ({ ...prev, [participantId]: e.target.value }))}
+                          type="number"
+                          min="0"
+                          step="0.1"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {paymentSplitType === 'exact' && normalizedSplitParticipantIds.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Exact amounts ({costCurrency})</p>
+                  {normalizedSplitParticipantIds.map((participantId) => {
+                    const participant = participants.find((p) => p.id === participantId);
+                    if (!participant) return null;
+                    return (
+                      <div key={participantId} className="grid grid-cols-[1fr_110px] gap-2 items-center">
+                        <span className="text-xs text-gray-700 dark:text-gray-300">{participant.name}</span>
+                        <Input
+                          value={exactInputs[participantId] ?? '0'}
+                          onChange={(e) => setExactInputs((prev) => ({ ...prev, [participantId]: e.target.value }))}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {paymentPreview && (
+                <div className="rounded-md border border-gray-200 dark:border-gray-700 p-2">
+                  <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                    Per-person preview ({tripBaseCurrency})
+                  </p>
+                  <div className="space-y-1">
+                    {normalizedSplitParticipantIds.map((participantId) => {
+                      const participant = participants.find((p) => p.id === participantId);
+                      const preview = paymentPreview[participantId];
+                      if (!participant || !preview) return null;
+                      return (
+                        <div key={participantId} className="flex items-center justify-between text-xs">
+                          <span className="text-gray-700 dark:text-gray-300">{participant.name}</span>
+                          <span className="text-gray-600 dark:text-gray-400">
+                            {formatCurrency(preview.original, costCurrency)}
+                            {' '}
+                            <span className="text-gray-400">/</span>
+                            {' '}
+                            {preview.base != null ? formatCurrency(preview.base, tripBaseCurrency) : 'Missing FX rate'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
@@ -607,6 +948,51 @@ export function ItemForm({
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
         />
+
+        <div className="flex flex-col gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <ImageIcon size={14} className="text-gray-500 dark:text-gray-400" />
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Attachments {attachments.length > 0 ? `(${attachments.length})` : ''}
+              </span>
+            </div>
+            <Button type="button" size="sm" variant="secondary" onClick={() => fileInputRef.current?.click()} disabled={attachmentProcessing}>
+              <Plus size={12} />
+              {attachmentProcessing ? 'Processing...' : 'Add images'}
+            </Button>
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            capture="environment"
+            className="hidden"
+            onChange={(e) => {
+              handleAttachmentFiles(e.target.files).catch(() => {
+                setAttachmentProcessing(false);
+              });
+            }}
+          />
+
+          <AttachmentThumbs
+            attachments={attachments}
+            size="medium"
+            interactive
+            onSelect={(attachment) => setActiveAttachment(attachment)}
+            onRemove={(attachmentId) => {
+              handleRemoveAttachment(attachmentId).catch(() => {
+                setAttachments((prev) => prev);
+              });
+            }}
+            emptyLabel="No attachments yet"
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Images are compressed in-browser and stored in IndexedDB (thumbnails + full view).
+          </p>
+        </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
@@ -616,6 +1002,7 @@ export function ItemForm({
           </Button>
         </div>
       </form>
+      <AttachmentLightbox open={!!activeAttachment} attachment={activeAttachment} onClose={() => setActiveAttachment(null)} />
     </Modal>
   );
 }

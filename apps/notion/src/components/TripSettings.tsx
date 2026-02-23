@@ -1,17 +1,23 @@
-import React, { useEffect, useState } from 'react';
-import type { AppSettings, Trip, ThemePreference } from '@trip-planner/core';
-import { CURRENCIES, DEFAULT_NOMINATIM_ENDPOINT } from '@trip-planner/core';
-import { Button, Input, Select, Modal, toast } from '@trip-planner/ui';
-import { Sun, Moon, Monitor, Info } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { AppSettings, Trip, ThemePreference, TravelMode } from '@trip-planner/core';
+import {
+  CURRENCIES,
+  DEFAULT_NOMINATIM_ENDPOINT,
+  clearRoutingCache,
+  fetchExchangeRates,
+  getRoutingProviders,
+} from '@trip-planner/core';
+import { Button, Input, Select, Modal, TextArea, toast } from '@trip-planner/ui';
+import { Sun, Moon, Monitor, Info, Route, Coins } from 'lucide-react';
 
 interface TripSettingsProps {
   open: boolean;
   trip: Trip;
+  settings: AppSettings;
   onClose: () => void;
-  onUpdate: (updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'currency'>>) => void;
+  onUpdate: (updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'baseCurrency' | 'defaultTravelMode'>>) => void;
   theme: ThemePreference;
   onThemeChange: (theme: ThemePreference) => void;
-  geocodingProviderEndpoint: string;
   onUpdateSettings: (updates: Partial<AppSettings>) => void;
 }
 
@@ -21,45 +27,142 @@ const themeOptions: { value: ThemePreference; label: string; icon: React.ReactNo
   { value: 'dark', label: 'Dark', icon: <Moon size={14} /> },
 ];
 
+const travelModeOptions: { value: TravelMode; label: string }[] = [
+  { value: 'walk', label: 'Walk' },
+  { value: 'drive', label: 'Drive' },
+  { value: 'transit', label: 'Transit' },
+];
+
 export function TripSettings({
   open,
   trip,
+  settings,
   onClose,
   onUpdate,
   theme,
   onThemeChange,
-  geocodingProviderEndpoint,
   onUpdateSettings,
 }: TripSettingsProps) {
   const [name, setName] = useState(trip.name);
   const [startDate, setStartDate] = useState(trip.startDate ?? '');
   const [endDate, setEndDate] = useState(trip.endDate ?? '');
-  const [currency, setCurrency] = useState(trip.currency);
-  const [endpoint, setEndpoint] = useState(geocodingProviderEndpoint);
+  const [baseCurrency, setBaseCurrency] = useState(trip.baseCurrency);
+  const [defaultTravelMode, setDefaultTravelMode] = useState<TravelMode>(trip.defaultTravelMode ?? 'walk');
+
+  const [endpoint, setEndpoint] = useState(settings.geocodingProviderEndpoint);
+  const [routingProviderId, setRoutingProviderId] = useState(settings.routing.providerId);
+  const [orsApiKey, setOrsApiKey] = useState(settings.routing.openrouteserviceApiKey ?? '');
+  const [computeTravelLazily, setComputeTravelLazily] = useState(settings.routing.computeTravelLazily);
+  const [showRoutesOnMapByDefault, setShowRoutesOnMapByDefault] = useState(settings.routing.showRoutesOnMapByDefault);
+  const [routeCacheTtlHours, setRouteCacheTtlHours] = useState(String(Math.round(settings.routing.routeCacheTtlMs / (60 * 60 * 1000))));
+
+  const [manualOverridesText, setManualOverridesText] = useState('{}');
+  const [useManualRatesOnly, setUseManualRatesOnly] = useState(!!settings.exchangeRates.useManualRatesOnly);
+  const [ratesLoading, setRatesLoading] = useState(false);
+
+  const routingProviders = useMemo(() => getRoutingProviders(), []);
 
   useEffect(() => {
     if (!open) return;
     setName(trip.name);
     setStartDate(trip.startDate ?? '');
     setEndDate(trip.endDate ?? '');
-    setCurrency(trip.currency);
-    setEndpoint(geocodingProviderEndpoint);
-  }, [open, trip.id, trip.name, trip.startDate, trip.endDate, trip.currency, geocodingProviderEndpoint]);
+    setBaseCurrency(trip.baseCurrency);
+    setDefaultTravelMode(trip.defaultTravelMode ?? 'walk');
+
+    setEndpoint(settings.geocodingProviderEndpoint);
+    setRoutingProviderId(settings.routing.providerId);
+    setOrsApiKey(settings.routing.openrouteserviceApiKey ?? '');
+    setComputeTravelLazily(settings.routing.computeTravelLazily);
+    setShowRoutesOnMapByDefault(settings.routing.showRoutesOnMapByDefault);
+    setRouteCacheTtlHours(String(Math.max(1, Math.round(settings.routing.routeCacheTtlMs / (60 * 60 * 1000)))));
+    setUseManualRatesOnly(!!settings.exchangeRates.useManualRatesOnly);
+    setManualOverridesText(JSON.stringify(settings.exchangeRates.manualOverrides ?? {}, null, 2));
+  }, [open, trip, settings]);
+
+  const parsedManualOverrides = (() => {
+    try {
+      const parsed = JSON.parse(manualOverridesText);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { value: null as Record<string, number> | null, error: 'Manual overrides must be a JSON object' };
+      }
+      const normalized: Record<string, number> = {};
+      for (const [currency, rate] of Object.entries(parsed)) {
+        if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) {
+          return { value: null, error: `Invalid rate for ${currency}` };
+        }
+        normalized[currency.toUpperCase()] = rate;
+      }
+      return { value: normalized, error: null };
+    } catch {
+      return { value: null as Record<string, number> | null, error: 'Invalid JSON' };
+    }
+  })();
+
+  const handleRefreshRates = async () => {
+    setRatesLoading(true);
+    try {
+      const fetched = await fetchExchangeRates(baseCurrency || trip.baseCurrency);
+      onUpdateSettings({
+        exchangeRates: {
+          ...fetched,
+          manualOverrides: settings.exchangeRates.manualOverrides ?? {},
+          useManualRatesOnly,
+        },
+      });
+      toast('Exchange rates updated');
+    } catch (error) {
+      console.error(error);
+      toast('Failed to update rates', 'error');
+    } finally {
+      setRatesLoading(false);
+    }
+  };
+
+  const handleClearRouteCache = async () => {
+    try {
+      await clearRoutingCache();
+      toast('Routing cache cleared');
+    } catch (error) {
+      console.error(error);
+      toast('Failed to clear routing cache', 'error');
+    }
+  };
 
   const handleSave = () => {
+    if (parsedManualOverrides.error) {
+      toast(parsedManualOverrides.error, 'error');
+      return;
+    }
+
     onUpdate({
       name: name.trim() || trip.name,
       startDate: startDate || undefined,
       endDate: endDate || undefined,
-      currency,
+      baseCurrency: (baseCurrency || trip.baseCurrency).toUpperCase(),
+      defaultTravelMode,
     });
 
-    const trimmedEndpoint = endpoint.trim() || DEFAULT_NOMINATIM_ENDPOINT;
-    if (trimmedEndpoint !== geocodingProviderEndpoint) {
-      onUpdateSettings({ geocodingProviderEndpoint: trimmedEndpoint });
-    }
+    const ttlHours = Math.max(1, Number.parseFloat(routeCacheTtlHours) || 168);
 
-    toast('Trip updated');
+    onUpdateSettings({
+      geocodingProviderEndpoint: endpoint.trim() || DEFAULT_NOMINATIM_ENDPOINT,
+      routing: {
+        providerId: routingProviderId,
+        openrouteserviceApiKey: orsApiKey,
+        computeTravelLazily,
+        showRoutesOnMapByDefault,
+        routeCacheTtlMs: Math.round(ttlHours * 60 * 60 * 1000),
+      },
+      exchangeRates: {
+        ...settings.exchangeRates,
+        base: (settings.exchangeRates.base || baseCurrency || trip.baseCurrency).toUpperCase(),
+        manualOverrides: parsedManualOverrides.value ?? {},
+        useManualRatesOnly,
+      },
+    });
+
+    toast('Settings saved');
     onClose();
   };
 
@@ -71,11 +174,19 @@ export function TripSettings({
           <Input label="Start Date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           <Input label="End Date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </div>
+
         <Select
-          label="Currency"
-          value={currency}
-          onChange={(e) => setCurrency(e.target.value)}
-          options={CURRENCIES.map((c) => ({ value: c, label: c }))}
+          label="Base Currency"
+          value={baseCurrency}
+          onChange={(e) => setBaseCurrency(e.target.value)}
+          options={CURRENCIES.map((currency) => ({ value: currency, label: currency }))}
+        />
+
+        <Select
+          label="Default Travel Mode"
+          value={defaultTravelMode}
+          onChange={(e) => setDefaultTravelMode(e.target.value as TravelMode)}
+          options={travelModeOptions}
         />
 
         <div className="flex flex-col gap-1">
@@ -95,6 +206,86 @@ export function TripSettings({
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="flex flex-col gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+          <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <Route size={14} className="text-gray-500 dark:text-gray-400" />
+            Routing
+          </div>
+          <Select
+            label="Routing Provider"
+            value={routingProviderId}
+            onChange={(e) => setRoutingProviderId(e.target.value as AppSettings['routing']['providerId'])}
+            options={routingProviders.map((provider) => ({ value: provider.id, label: provider.label }))}
+          />
+          <Input
+            label="openrouteservice API key (optional)"
+            value={orsApiKey}
+            onChange={(e) => setOrsApiKey(e.target.value)}
+            placeholder="Stored locally only"
+            type="password"
+          />
+          <div className="grid grid-cols-1 gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={computeTravelLazily} onChange={(e) => setComputeTravelLazily(e.target.checked)} />
+              Compute travel lazily (recommended)
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={showRoutesOnMapByDefault} onChange={(e) => setShowRoutesOnMapByDefault(e.target.checked)} />
+              Show routes on map by default
+            </label>
+          </div>
+          <Input
+            label="Route cache TTL (hours)"
+            type="number"
+            min="1"
+            step="1"
+            value={routeCacheTtlHours}
+            onChange={(e) => setRouteCacheTtlHours(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="secondary" onClick={() => { void handleClearRouteCache(); }}>
+              Clear routing cache
+            </Button>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Public demo routing providers are rate limited. Use per-day/per-segment compute actions to avoid bulk requests.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+          <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <Coins size={14} className="text-gray-500 dark:text-gray-400" />
+            Exchange Rates
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Provider: Frankfurter (latest rates, no API key). Rates are stored locally and used for budget + split calculations.
+          </p>
+          <div className="flex flex-wrap gap-2 items-center">
+            <Button type="button" size="sm" variant="secondary" onClick={() => { void handleRefreshRates(); }} disabled={ratesLoading}>
+              {ratesLoading ? 'Updating...' : 'Update rates'}
+            </Button>
+            {settings.exchangeRates.fetchedAt && (
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                Last updated: {new Date(settings.exchangeRates.fetchedAt).toLocaleString()}
+              </span>
+            )}
+          </div>
+          <label className="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <input type="checkbox" checked={useManualRatesOnly} onChange={(e) => setUseManualRatesOnly(e.target.checked)} />
+            Use manual rates only
+          </label>
+          <TextArea
+            label="Manual rate overrides (JSON: 1 {base} -> X currency)"
+            value={manualOverridesText}
+            onChange={(e) => setManualOverridesText(e.target.value)}
+            placeholder='{"JPY": 150.5, "EUR": 0.92}'
+            rows={5}
+          />
+          {parsedManualOverrides.error && (
+            <p className="text-xs text-red-600 dark:text-red-400">{parsedManualOverrides.error}</p>
+          )}
         </div>
 
         <div className="flex flex-col gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
@@ -123,10 +314,10 @@ export function TripSettings({
         <div className="flex flex-col gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
           <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">About data</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Map and place data use OpenStreetMap. Search uses Nominatim, and opening hours are best-effort from OSM tags via Overpass.
+            Map/place data use OpenStreetMap. Search uses Nominatim, opening hours use Overpass, routing can use OSRM/Valhalla/openrouteservice.
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Hours may be missing or outdated. Verify important details directly with the venue.
+            Public demo providers can be limited, missing data, or temporarily unavailable.
           </p>
           <div className="flex flex-wrap gap-3 text-xs">
             <a
