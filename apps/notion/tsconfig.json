@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@trip-planner/core": ["../../packages/core/src"],
+      "@trip-planner/ui": ["../../packages/ui/src"]
+    }
+  },
+  "include": ["src", "../../packages/core/src", "../../packages/ui/src"]
+}
