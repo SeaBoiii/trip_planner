@@ -4,6 +4,8 @@ import type {
   ExchangeRatesState,
   RoutingSettings,
   TravelMode,
+  TravelDefaults,
+  TravelOverride,
   VersionedSchema,
   Money,
 } from './types';
@@ -11,7 +13,7 @@ import { builtInTemplates } from './templates';
 import { DEFAULT_NOMINATIM_ENDPOINT } from './services/geocoding';
 
 const STORAGE_KEY = 'trip_planner_v1';
-const CURRENT_VERSION = 5;
+const CURRENT_VERSION = 6;
 const DEFAULT_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type Migration = (data: unknown) => unknown;
@@ -32,11 +34,69 @@ function normalizeTravelMode(value: unknown, fallback: TravelMode = 'WALK'): Tra
   return fallback;
 }
 
+function normalizeTravelDefaults(value: unknown, fallback: TravelDefaults = { mode: 'WALK', trafficAware: false }): TravelDefaults {
+  if (!isRecord(value)) return { ...fallback };
+  const mode = normalizeTravelMode(value.mode, fallback.mode);
+  const trafficAware =
+    typeof value.trafficAware === 'boolean'
+      ? value.trafficAware
+      : typeof fallback.trafficAware === 'boolean'
+      ? fallback.trafficAware
+      : false;
+  return {
+    mode,
+    trafficAware: mode === 'DRIVE' ? trafficAware : false,
+  };
+}
+
+function normalizeTravelOverridesRecord(value: unknown): Record<string, TravelOverride> | undefined {
+  if (!isRecord(value)) return undefined;
+  const overrides: Record<string, TravelOverride> = {};
+  for (const [edgeKey, rawOverride] of Object.entries(value)) {
+    if (typeof edgeKey !== 'string' || !edgeKey.includes('->')) continue;
+    if (isRecord(rawOverride)) {
+      const mode = normalizeTravelMode(rawOverride.mode, 'WALK');
+      const trafficAware = typeof rawOverride.trafficAware === 'boolean' ? rawOverride.trafficAware : undefined;
+      overrides[edgeKey] = {
+        mode,
+        trafficAware: mode === 'DRIVE' ? trafficAware : false,
+      };
+      continue;
+    }
+    // Legacy payloads may store mode string directly.
+    overrides[edgeKey] = {
+      mode: normalizeTravelMode(rawOverride, 'WALK'),
+      trafficAware: false,
+    };
+  }
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
+function collectAdjacentLocatedEdgeKeys(items: unknown[]): Set<string> {
+  const keys = new Set<string>();
+  for (let index = 0; index < items.length - 1; index += 1) {
+    const from = items[index];
+    const to = items[index + 1];
+    if (!isRecord(from) || !isRecord(to)) continue;
+    if (typeof from.id !== 'string' || typeof to.id !== 'string') continue;
+    if (!isRecord(from.location) || !isRecord(to.location)) continue;
+    keys.add(`${from.id}->${to.id}`);
+  }
+  return keys;
+}
+
+function pruneInvalidTravelOverrides(items: unknown[], overrides: Record<string, TravelOverride> | undefined) {
+  if (!overrides) return undefined;
+  const validEdges = collectAdjacentLocatedEdgeKeys(items);
+  const prunedEntries = Object.entries(overrides).filter(([edgeKey]) => validEdges.has(edgeKey));
+  if (prunedEntries.length === 0) return undefined;
+  return Object.fromEntries(prunedEntries) as Record<string, TravelOverride>;
+}
+
 function defaultRoutingSettings(): RoutingSettings {
   return {
     providerId: 'google_routes',
     googleApiKey: '',
-    trafficAwareDriveRoutes: false,
     computeTravelLazily: true,
     showRoutesOnMapByDefault: false,
     routeCacheTtlMs: DEFAULT_ROUTE_CACHE_TTL_MS,
@@ -71,10 +131,6 @@ function normalizeRoutingSettings(value: unknown): RoutingSettings {
       typeof value.googleApiKey === 'string'
         ? value.googleApiKey
         : defaults.googleApiKey,
-    trafficAwareDriveRoutes:
-      typeof value.trafficAwareDriveRoutes === 'boolean'
-        ? value.trafficAwareDriveRoutes
-        : defaults.trafficAwareDriveRoutes,
     computeTravelLazily:
       typeof value.computeTravelLazily === 'boolean' ? value.computeTravelLazily : defaults.computeTravelLazily,
     showRoutesOnMapByDefault:
@@ -262,36 +318,47 @@ function normalizeTripCollection(value: unknown): unknown {
           .filter(Boolean)
       : [];
 
+    const legacyTripDefaultMode = normalizeTravelMode(trip.defaultTravelMode, 'WALK');
+    const travelDefaults = normalizeTravelDefaults(trip.travelDefaults, {
+      mode: legacyTripDefaultMode,
+      trafficAware: false,
+    });
+
     const normalizedTrip = {
       ...trip,
       baseCurrency,
       participants,
-      defaultTravelMode: normalizeTravelMode(trip.defaultTravelMode, 'WALK'),
+      travelDefaults,
       days: Array.isArray(trip.days)
         ? trip.days.map((day) => {
             if (!isRecord(day)) return day;
-            const travelPreferences = isRecord(day.travelPreferences)
-              ? {
-                  modeOverridesBySegmentKey: isRecord(day.travelPreferences.modeOverridesBySegmentKey)
-                    ? Object.fromEntries(
-                        Object.entries(day.travelPreferences.modeOverridesBySegmentKey).map(([segmentKey, mode]) => [
-                          segmentKey,
-                          normalizeTravelMode(mode, 'WALK'),
-                        ])
-                      )
-                    : undefined,
-                }
+            const items = Array.isArray(day.items) ? day.items.map((item) => normalizeItemRecord(item, baseCurrency)) : [];
+            const dayTravelDefaults = isRecord(day.travelDefaults)
+              ? normalizeTravelDefaults(day.travelDefaults, travelDefaults)
               : undefined;
+            const legacyOverrides =
+              isRecord(day.travelPreferences) && isRecord(day.travelPreferences.modeOverridesBySegmentKey)
+                ? normalizeTravelOverridesRecord(day.travelPreferences.modeOverridesBySegmentKey)
+                : undefined;
+            const explicitOverrides = normalizeTravelOverridesRecord(day.travelOverrides);
+            const mergedOverrides = explicitOverrides ?? legacyOverrides;
             return {
               ...day,
-              travelPreferences,
-              items: Array.isArray(day.items) ? day.items.map((item) => normalizeItemRecord(item, baseCurrency)) : [],
+              items,
+              travelDefaults: dayTravelDefaults,
+              travelOverrides: pruneInvalidTravelOverrides(items, mergedOverrides),
             };
           })
         : [],
     };
 
     delete (normalizedTrip as Record<string, unknown>).currency;
+    delete (normalizedTrip as Record<string, unknown>).defaultTravelMode;
+    for (const day of Array.isArray(normalizedTrip.days) ? normalizedTrip.days : []) {
+      if (isRecord(day)) {
+        delete day.travelPreferences;
+      }
+    }
     return normalizedTrip;
   });
 }
@@ -363,6 +430,15 @@ const migrations: Record<number, Migration> = {
     };
   },
   4: (data: unknown) => {
+    if (!isRecord(data)) return data;
+    return {
+      ...data,
+      trips: normalizeTripCollection(data.trips),
+      templates: normalizeTemplateCollection(data.templates),
+      settings: normalizeSettings(data.settings),
+    };
+  },
+  5: (data: unknown) => {
     if (!isRecord(data)) return data;
     return {
       ...data,

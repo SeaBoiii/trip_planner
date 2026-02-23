@@ -39,7 +39,7 @@ export function useTripStore() {
 
   const updateTrip = useCallback((
     tripId: string,
-    updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'baseCurrency' | 'coverPhoto' | 'participants' | 'defaultTravelMode'>>
+    updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'baseCurrency' | 'coverPhoto' | 'participants' | 'travelDefaults'>>
   ) => {
     dispatch((s) => ops.updateTrip(s, tripId, updates));
   }, [dispatch]);
@@ -61,7 +61,7 @@ export function useTripStore() {
     dispatch((s) => ops.addDay(s, tripId, label, date));
   }, [dispatch]);
 
-  const updateDay = useCallback((tripId: string, dayId: string, updates: Partial<Pick<Day, 'label' | 'date'>>) => {
+  const updateDay = useCallback((tripId: string, dayId: string, updates: Partial<Pick<Day, 'label' | 'date' | 'travelDefaults' | 'travelOverrides'>>) => {
     dispatch((s) => ops.updateDay(s, tripId, dayId, updates));
   }, [dispatch]);
 

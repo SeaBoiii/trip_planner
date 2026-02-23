@@ -4,12 +4,15 @@ import { Button } from '@trip-planner/ui';
 import { Loader2, Route, Navigation } from 'lucide-react';
 
 interface TravelSegmentRowProps {
-  mode: TravelMode;
+  mode: TravelMode; // effective mode
   status: 'idle' | 'loading' | 'done';
   segment?: TravelSegment;
   fallbackDistanceMeters: number;
   fallbackDurationSeconds: number;
   error?: string;
+  overrideMode?: TravelMode;
+  autoSourceLabel?: 'Trip' | 'Day';
+  onChangeMode?: (mode: TravelMode | null) => void;
   onCompute?: () => void;
   onRetry?: () => void;
   mapsLinks?: { google: string; appleTransit?: string };
@@ -45,6 +48,9 @@ export function TravelSegmentRow({
   fallbackDistanceMeters,
   fallbackDurationSeconds,
   error,
+  overrideMode,
+  autoSourceLabel = 'Trip',
+  onChangeMode,
   onCompute,
   onRetry,
   mapsLinks,
@@ -60,6 +66,11 @@ export function TravelSegmentRow({
             <Route size={11} />
             {modeLabel(mode)}
           </span>
+          {overrideMode && (
+            <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+              Override
+            </span>
+          )}
           {distance != null && (
             <span className="text-gray-600 dark:text-gray-400">{formatDistance(distance)}</span>
           )}
@@ -89,9 +100,25 @@ export function TravelSegmentRow({
         )}
       </div>
 
+      {onChangeMode && (
+        <div className="mt-2 flex items-center gap-2">
+          <label className="text-xs text-gray-500 dark:text-gray-400">Mode</label>
+          <select
+            value={overrideMode ?? 'AUTO'}
+            onChange={(e) => onChangeMode(e.target.value === 'AUTO' ? null : (e.target.value as TravelMode))}
+            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+          >
+            <option value="AUTO">Auto ({autoSourceLabel})</option>
+            <option value="WALK">Walk</option>
+            <option value="DRIVE">Drive</option>
+            <option value="TRANSIT">Transit</option>
+          </select>
+        </div>
+      )}
+
       {status === 'done' && error && (
         <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-          Route API unavailable: {error}
+          {mode === 'TRANSIT' ? `Transit unavailable: ${error}` : `Route API unavailable: ${error}`}
         </p>
       )}
 

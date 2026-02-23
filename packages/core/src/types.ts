@@ -64,8 +64,14 @@ export interface TravelSegment {
   fetchedAt: number;
 }
 
-export interface DayTravelPreferences {
-  modeOverridesBySegmentKey?: Record<string, TravelMode>;
+export interface TravelDefaults {
+  mode: TravelMode;
+  trafficAware?: boolean; // DRIVE only
+}
+
+export interface TravelOverride {
+  mode: TravelMode;
+  trafficAware?: boolean; // DRIVE only
 }
 
 export type PaymentSplitEqual = {
@@ -108,7 +114,8 @@ export interface Day {
   id: string;
   label: string;
   date?: string;
-  travelPreferences?: DayTravelPreferences;
+  travelDefaults?: TravelDefaults;
+  travelOverrides?: Record<string, TravelOverride>;
   items: Item[];
 }
 
@@ -120,7 +127,7 @@ export interface Trip {
   baseCurrency: string;
   coverPhoto?: string;
   participants: Participant[];
-  defaultTravelMode?: TravelMode;
+  travelDefaults?: TravelDefaults;
   days: Day[];
   createdAt: string;
   updatedAt: string;
@@ -168,7 +175,6 @@ export interface ExchangeRatesState {
 export interface RoutingSettings {
   providerId: RoutingProviderId;
   googleApiKey?: string;
-  trafficAwareDriveRoutes: boolean;
   computeTravelLazily: boolean;
   showRoutesOnMapByDefault: boolean;
   routeCacheTtlMs: number;

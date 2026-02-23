@@ -46,7 +46,8 @@ describe('storage migration', () => {
     expect(trip.baseCurrency).toBe('EUR');
     expect('currency' in trip).toBe(false);
     expect(trip.participants).toEqual([]);
-    expect(trip.defaultTravelMode).toBe('WALK');
+    expect(trip.travelDefaults).toEqual({ mode: 'WALK', trafficAware: false });
+    expect('defaultTravelMode' in trip).toBe(false);
 
     expect(item.locationText).toBe('Paris');
     expect(item.location).toBeUndefined();

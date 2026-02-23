@@ -14,7 +14,7 @@ interface TripSettingsProps {
   trip: Trip;
   settings: AppSettings;
   onClose: () => void;
-  onUpdate: (updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'baseCurrency' | 'defaultTravelMode'>>) => void;
+  onUpdate: (updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'baseCurrency' | 'travelDefaults'>>) => void;
   theme: ThemePreference;
   onThemeChange: (theme: ThemePreference) => void;
   onUpdateSettings: (updates: Partial<AppSettings>) => void;
@@ -46,11 +46,11 @@ export function TripSettings({
   const [startDate, setStartDate] = useState(trip.startDate ?? '');
   const [endDate, setEndDate] = useState(trip.endDate ?? '');
   const [baseCurrency, setBaseCurrency] = useState(trip.baseCurrency);
-  const [defaultTravelMode, setDefaultTravelMode] = useState<TravelMode>(trip.defaultTravelMode ?? 'WALK');
+  const [defaultTravelMode, setDefaultTravelMode] = useState<TravelMode>(trip.travelDefaults?.mode ?? 'WALK');
+  const [tripTrafficAwareDrive, setTripTrafficAwareDrive] = useState(!!trip.travelDefaults?.trafficAware);
 
   const [endpoint, setEndpoint] = useState(settings.geocodingProviderEndpoint);
   const [googleApiKey, setGoogleApiKey] = useState(settings.routing.googleApiKey ?? '');
-  const [trafficAwareDriveRoutes, setTrafficAwareDriveRoutes] = useState(settings.routing.trafficAwareDriveRoutes);
   const [computeTravelLazily, setComputeTravelLazily] = useState(settings.routing.computeTravelLazily);
   const [showRoutesOnMapByDefault, setShowRoutesOnMapByDefault] = useState(settings.routing.showRoutesOnMapByDefault);
   const [routeCacheTtlHours, setRouteCacheTtlHours] = useState(String(Math.round(settings.routing.routeCacheTtlMs / (60 * 60 * 1000))));
@@ -65,11 +65,11 @@ export function TripSettings({
     setStartDate(trip.startDate ?? '');
     setEndDate(trip.endDate ?? '');
     setBaseCurrency(trip.baseCurrency);
-    setDefaultTravelMode(trip.defaultTravelMode ?? 'WALK');
+    setDefaultTravelMode(trip.travelDefaults?.mode ?? 'WALK');
+    setTripTrafficAwareDrive(!!trip.travelDefaults?.trafficAware);
 
     setEndpoint(settings.geocodingProviderEndpoint);
     setGoogleApiKey(settings.routing.googleApiKey ?? '');
-    setTrafficAwareDriveRoutes(settings.routing.trafficAwareDriveRoutes);
     setComputeTravelLazily(settings.routing.computeTravelLazily);
     setShowRoutesOnMapByDefault(settings.routing.showRoutesOnMapByDefault);
     setRouteCacheTtlHours(String(Math.max(1, Math.round(settings.routing.routeCacheTtlMs / (60 * 60 * 1000)))));
@@ -137,7 +137,10 @@ export function TripSettings({
       startDate: startDate || undefined,
       endDate: endDate || undefined,
       baseCurrency: (baseCurrency || trip.baseCurrency).toUpperCase(),
-      defaultTravelMode,
+      travelDefaults: {
+        mode: defaultTravelMode,
+        trafficAware: defaultTravelMode === 'DRIVE' ? tripTrafficAwareDrive : false,
+      },
     });
 
     const ttlHours = Math.max(1, Number.parseFloat(routeCacheTtlHours) || 168);
@@ -147,7 +150,6 @@ export function TripSettings({
       routing: {
         providerId: 'google_routes',
         googleApiKey,
-        trafficAwareDriveRoutes,
         computeTravelLazily,
         showRoutesOnMapByDefault,
         routeCacheTtlMs: Math.round(ttlHours * 60 * 60 * 1000),
@@ -222,8 +224,8 @@ export function TripSettings({
             <label className="inline-flex items-center gap-2">
               <input
                 type="checkbox"
-                checked={trafficAwareDriveRoutes}
-                onChange={(e) => setTrafficAwareDriveRoutes(e.target.checked)}
+                checked={tripTrafficAwareDrive}
+                onChange={(e) => setTripTrafficAwareDrive(e.target.checked)}
               />
               Use traffic-aware routes (DRIVE only)
             </label>

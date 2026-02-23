@@ -1,6 +1,7 @@
 import { deepClone, nanoid } from './utils';
 import { createNewTrip, createNewDay, createNewItem } from './factories';
 import type { AppState, Trip, Day, Item, Template, ThemePreference, AppSettings } from './types';
+import { normalizeTravelOverrides } from './services/routing';
 
 // ── Trip Operations ──
 
@@ -16,7 +17,7 @@ export function createTrip(state: AppState, name: string, baseCurrency = 'SGD'):
 export function updateTrip(
   state: AppState,
   tripId: string,
-  updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'baseCurrency' | 'coverPhoto' | 'participants' | 'defaultTravelMode'>>
+  updates: Partial<Pick<Trip, 'name' | 'startDate' | 'endDate' | 'baseCurrency' | 'coverPhoto' | 'participants' | 'travelDefaults'>>
 ): AppState {
   return {
     ...state,
@@ -67,10 +68,15 @@ export function addDay(state: AppState, tripId: string, label: string, date?: st
   }));
 }
 
-export function updateDay(state: AppState, tripId: string, dayId: string, updates: Partial<Pick<Day, 'label' | 'date'>>): AppState {
+export function updateDay(
+  state: AppState,
+  tripId: string,
+  dayId: string,
+  updates: Partial<Pick<Day, 'label' | 'date' | 'travelDefaults' | 'travelOverrides'>>
+): AppState {
   return mapTrip(state, tripId, (trip) => ({
     ...trip,
-    days: trip.days.map((d) => (d.id === dayId ? { ...d, ...updates } : d)),
+    days: trip.days.map((d) => (d.id === dayId ? normalizeTravelOverrides({ ...d, ...updates }) : d)),
     updatedAt: new Date().toISOString(),
   }));
 }
@@ -114,10 +120,12 @@ export function updateItem(
   itemId: string,
   updates: Partial<Omit<Item, 'id'>>
 ): AppState {
-  return mapDay(state, tripId, dayId, (day) => ({
-    ...day,
-    items: day.items.map((it) => (it.id === itemId ? { ...it, ...updates } : it)),
-  }));
+  return mapDay(state, tripId, dayId, (day) =>
+    normalizeTravelOverrides({
+      ...day,
+      items: day.items.map((it) => (it.id === itemId ? { ...it, ...updates } : it)),
+    })
+  );
 }
 
 export function deleteItem(
@@ -126,10 +134,12 @@ export function deleteItem(
   dayId: string,
   itemId: string
 ): AppState {
-  return mapDay(state, tripId, dayId, (day) => ({
-    ...day,
-    items: day.items.filter((it) => it.id !== itemId),
-  }));
+  return mapDay(state, tripId, dayId, (day) =>
+    normalizeTravelOverrides({
+      ...day,
+      items: day.items.filter((it) => it.id !== itemId),
+    })
+  );
 }
 
 export function moveItem(
@@ -152,7 +162,14 @@ export function moveItem(
     const [item] = fromDay.items.splice(itemIndex, 1);
     toDay.items.splice(newIndex, 0, item);
 
-    return { ...trip, days, updatedAt: new Date().toISOString() };
+    const normalizedDays = days.map((day) => {
+      if (day.id === fromDay.id || day.id === toDay.id) {
+        return normalizeTravelOverrides(day);
+      }
+      return day;
+    });
+
+    return { ...trip, days: normalizedDays, updatedAt: new Date().toISOString() };
   });
 }
 
@@ -160,7 +177,7 @@ export function reorderItems(state: AppState, tripId: string, dayId: string, ite
   return mapDay(state, tripId, dayId, (day) => {
     const itemMap = new Map(day.items.map((it) => [it.id, it]));
     const reordered = itemIds.map((id) => itemMap.get(id)).filter(Boolean) as Item[];
-    return { ...day, items: reordered };
+    return normalizeTravelOverrides({ ...day, items: reordered });
   });
 }
 

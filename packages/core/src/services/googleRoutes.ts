@@ -1,4 +1,4 @@
-import type { TravelMode, TravelSegment } from '../types';
+import type { Day, Item, TravelDefaults, TravelMode, TravelOverride, TravelSegment } from '../types';
 import { DEFAULT_ROUTE_CACHE_TTL_MS } from '../storage';
 import { IDB_STORES, idbClear, idbGet, idbSet } from './indexedDb';
 import { getGlobalRateLimitedQueue, queuedRequest } from './requestQueue';
@@ -6,7 +6,8 @@ import { getGlobalRateLimitedQueue, queuedRequest } from './requestQueue';
 export const GOOGLE_ROUTES_ENDPOINT = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 
 const GOOGLE_ROUTES_QUEUE = getGlobalRateLimitedQueue('routing_google_routes', 1000);
-const ROUTING_CACHE_VERSION = 'v1';
+const SEGMENT_CACHE_VERSION = 'v2';
+const TRANSIT_ROUTE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 export interface GoogleRouteWaypoint {
   itemId: string;
@@ -14,31 +15,85 @@ export interface GoogleRouteWaypoint {
   lon: number;
 }
 
-export interface ComputeDayTravelSegmentsParams {
-  apiKey: string;
+export interface CachedSegmentRoute {
+  fromItemId?: string;
+  toItemId?: string;
   mode: TravelMode;
-  trafficAware: boolean;
-  waypoints: GoogleRouteWaypoint[];
+  trafficAware?: boolean;
+  distanceMeters: number;
+  durationSeconds: number;
+  coords?: Array<[number, number]>; // [lat, lon]
+  fetchedAt: number;
+  provider: 'google_routes';
+}
+
+interface CachedSegmentRouteEntry {
+  key: string;
+  expiresAt: number;
+  value: CachedSegmentRoute;
+}
+
+export interface RouteSegmentComputationResult {
+  route?: CachedSegmentRoute;
+  error?: string;
+  fromCache: boolean;
+}
+
+export interface ComputeSegmentRouteParams {
+  apiKey: string;
+  from: [number, number]; // [lon, lat]
+  to: [number, number]; // [lon, lat]
+  mode: TravelMode;
+  trafficAware?: boolean;
+  fromItemId?: string;
+  toItemId?: string;
+  ttlMs?: number;
+  force?: boolean;
   languageCode?: string;
   regionCode?: string;
 }
 
-export interface DayTravelCacheArgs {
+export interface ComputeDayRoutesSingleModeParams {
+  apiKey: string;
+  mode: TravelMode;
+  trafficAware?: boolean;
+  waypoints: GoogleRouteWaypoint[];
+  ttlMs?: number;
+  force?: boolean;
+  languageCode?: string;
+  regionCode?: string;
+}
+
+export interface TravelForDaySummary {
+  computedCount: number;
+  cachedCount: number;
+  failedCount: number;
+}
+
+export interface TravelForDayResult extends TravelForDaySummary {
+  segmentsByEdge: Record<string, CachedSegmentRoute>;
+  errorsByEdge: Record<string, string>;
+}
+
+export interface ComputeTravelForDayParams {
   tripId: string;
-  dayId: string;
+  day: Day;
+  tripTravelDefaults?: TravelDefaults;
+  apiKey: string;
+  ttlMs?: number;
+  force?: boolean;
+  languageCode?: string;
+  regionCode?: string;
+}
+
+interface AdjacentLocatedPair {
+  edgeKey: string;
+  fromItemId: string;
+  toItemId: string;
+  from: [number, number]; // [lon, lat]
+  to: [number, number]; // [lon, lat]
   mode: TravelMode;
   trafficAware: boolean;
-  waypoints: GoogleRouteWaypoint[];
-}
-
-export interface CachedDayTravelSegments {
-  cacheKey: string;
-  segments: TravelSegment[];
-  fetchedAt: number;
-}
-
-interface DayTravelCacheEntry extends CachedDayTravelSegments {
-  expiresAt: number;
 }
 
 interface GoogleRoutesErrorLike extends Error {
@@ -58,56 +113,129 @@ class GoogleRoutesError extends Error implements GoogleRoutesErrorLike {
   }
 }
 
-type GoogleLegPolyline = {
-  geoJsonLinestring?: unknown;
+type GoogleLegPolyline = { geoJsonLinestring?: unknown };
+type GoogleRoutesLeg = {
+  distanceMeters?: number;
+  duration?: string;
+  polyline?: GoogleLegPolyline;
 };
-
 type GoogleComputeRoutesResponse = {
   routes?: Array<{
-    legs?: Array<{
-      distanceMeters?: number;
-      duration?: string;
-      polyline?: GoogleLegPolyline;
-    }>;
+    legs?: GoogleRoutesLeg[];
   }>;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
 
 function roundCoord(value: number): string {
   return value.toFixed(5);
 }
 
-function hashString(input: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
+function getTransitDepartureBucketMs(now = Date.now()): number {
+  return Math.floor(now / (60 * 60 * 1000)) * 60 * 60 * 1000;
 }
 
-function waypointSignature(waypoints: GoogleRouteWaypoint[]): string {
-  return waypoints
-    .map((waypoint) => `${waypoint.itemId}@${roundCoord(waypoint.lat)},${roundCoord(waypoint.lon)}`)
-    .join('|');
+function normalizeTrafficAware(mode: TravelMode, trafficAware?: boolean): boolean {
+  if (mode !== 'DRIVE') return false;
+  return !!trafficAware;
+}
+
+function effectiveTtlMs(mode: TravelMode, requestedTtlMs?: number): number {
+  if (mode === 'TRANSIT') {
+    return Math.min(requestedTtlMs ?? TRANSIT_ROUTE_CACHE_TTL_MS, TRANSIT_ROUTE_CACHE_TTL_MS);
+  }
+  return requestedTtlMs ?? DEFAULT_ROUTE_CACHE_TTL_MS;
+}
+
+function transitBucketPart(mode: TravelMode, now = Date.now()): string {
+  return mode === 'TRANSIT' ? `tb:${getTransitDepartureBucketMs(now)}` : 'tb:none';
 }
 
 export function buildTravelSegmentPairKey(fromItemId: string, toItemId: string): string {
   return `${fromItemId}->${toItemId}`;
 }
 
+export function resolveTripTravelDefaults(tripTravelDefaults?: TravelDefaults): TravelDefaults {
+  return {
+    mode: tripTravelDefaults?.mode ?? 'WALK',
+    trafficAware: tripTravelDefaults?.mode === 'DRIVE' ? !!tripTravelDefaults?.trafficAware : false,
+  };
+}
+
+export function resolveDayTravelDefaults(day: Day, tripTravelDefaults?: TravelDefaults): TravelDefaults {
+  const tripDefaults = resolveTripTravelDefaults(tripTravelDefaults);
+  if (!day.travelDefaults) return tripDefaults;
+  const mode = day.travelDefaults.mode ?? tripDefaults.mode;
+  return {
+    mode,
+    trafficAware: mode === 'DRIVE' ? (day.travelDefaults.trafficAware ?? tripDefaults.trafficAware ?? false) : false,
+  };
+}
+
+export function getEffectiveTravelForEdge(
+  day: Day,
+  fromItemId: string,
+  toItemId: string,
+  tripTravelDefaults?: TravelDefaults
+): TravelOverride {
+  const dayDefaults = resolveDayTravelDefaults(day, tripTravelDefaults);
+  const edgeKey = buildTravelSegmentPairKey(fromItemId, toItemId);
+  const override = day.travelOverrides?.[edgeKey];
+  const mode = override?.mode ?? dayDefaults.mode;
+  const trafficAware = mode === 'DRIVE'
+    ? (override?.trafficAware ?? dayDefaults.trafficAware ?? false)
+    : false;
+  return { mode, trafficAware };
+}
+
+export function normalizeTravelOverrides(day: Day): Day {
+  const overrides = day.travelOverrides;
+  if (!overrides || Object.keys(overrides).length === 0) {
+    if (day.travelOverrides === undefined) return day;
+    const next = { ...day };
+    delete next.travelOverrides;
+    return next;
+  }
+
+  const validEdgeKeys = new Set<string>();
+  for (let index = 0; index < day.items.length - 1; index += 1) {
+    const from = day.items[index];
+    const to = day.items[index + 1];
+    if (!from.location || !to.location) continue;
+    validEdgeKeys.add(buildTravelSegmentPairKey(from.id, to.id));
+  }
+
+  const nextOverrides = Object.fromEntries(
+    Object.entries(overrides).filter(([edgeKey]) => validEdgeKeys.has(edgeKey))
+  ) as Record<string, TravelOverride>;
+
+  const nextKeys = Object.keys(nextOverrides);
+  const currentKeys = Object.keys(overrides);
+  const unchanged =
+    nextKeys.length === currentKeys.length &&
+    nextKeys.every((key) => overrides[key] && overrides[key].mode === nextOverrides[key].mode &&
+      (overrides[key].trafficAware ?? false) === (nextOverrides[key].trafficAware ?? false));
+
+  if (unchanged) return day;
+
+  const nextDay: Day = { ...day };
+  if (nextKeys.length === 0) {
+    delete nextDay.travelOverrides;
+  } else {
+    nextDay.travelOverrides = nextOverrides;
+  }
+  return nextDay;
+}
+
 export function parseGoogleDurationSeconds(value: string | undefined | null): number {
-  if (!value || typeof value !== 'string') {
-    throw new Error('Missing duration');
-  }
+  if (!value || typeof value !== 'string') throw new Error('Missing duration');
   const match = value.match(/^(-?\d+(?:\.\d+)?)s$/);
-  if (!match) {
-    throw new Error(`Invalid Google duration format: ${value}`);
-  }
+  if (!match) throw new Error(`Invalid Google duration format: ${value}`);
   const seconds = Number(match[1]);
-  if (!Number.isFinite(seconds)) {
-    throw new Error(`Invalid Google duration value: ${value}`);
-  }
-  return Math.round(seconds);
+  if (!Number.isFinite(seconds)) throw new Error(`Invalid Google duration value: ${value}`);
+  return Math.max(0, Math.round(seconds));
 }
 
 export function haversineDistanceMeters(aLat: number, aLon: number, bLat: number, bLon: number): number {
@@ -143,18 +271,25 @@ export function buildAppleTransitLink(from: [number, number], to: [number, numbe
   return `https://maps.apple.com/?saddr=${fromLat},${fromLon}&daddr=${toLat},${toLon}&dirflg=r`;
 }
 
-export function buildDayTravelCacheKey(args: DayTravelCacheArgs): string {
-  const signature = waypointSignature(args.waypoints);
-  const hashedSignature = hashString(signature);
+export function buildSegmentRouteCacheKey(args: {
+  from: [number, number]; // [lon, lat]
+  to: [number, number]; // [lon, lat]
+  mode: TravelMode;
+  trafficAware?: boolean;
+  nowMs?: number;
+}): string {
+  const [fromLon, fromLat] = args.from;
+  const [toLon, toLat] = args.to;
+  const trafficAware = normalizeTrafficAware(args.mode, args.trafficAware);
   return [
-    'routing-day',
-    ROUTING_CACHE_VERSION,
+    'route-segment',
+    SEGMENT_CACHE_VERSION,
     'google_routes',
-    args.tripId,
-    args.dayId,
     args.mode,
-    args.trafficAware ? 'traffic' : 'no-traffic',
-    hashedSignature,
+    trafficAware ? 'traffic' : 'no-traffic',
+    `${roundCoord(fromLat)},${roundCoord(fromLon)}`,
+    `${roundCoord(toLat)},${roundCoord(toLon)}`,
+    transitBucketPart(args.mode, args.nowMs),
   ].join(':');
 }
 
@@ -178,11 +313,9 @@ function parseGeoJsonCoords(raw: unknown): Array<[number, number]> | undefined {
       return undefined;
     }
   }
-  if (!parsed || typeof parsed !== 'object') return undefined;
-  const value = parsed as { type?: unknown; coordinates?: unknown };
-  if (value.type !== 'LineString' || !Array.isArray(value.coordinates)) return undefined;
+  if (!isRecord(parsed) || parsed.type !== 'LineString' || !Array.isArray(parsed.coordinates)) return undefined;
   const coords: Array<[number, number]> = [];
-  for (const pair of value.coordinates) {
+  for (const pair of parsed.coordinates) {
     if (!Array.isArray(pair) || pair.length < 2) continue;
     const lon = Number(pair[0]);
     const lat = Number(pair[1]);
@@ -192,9 +325,29 @@ function parseGeoJsonCoords(raw: unknown): Array<[number, number]> | undefined {
   return coords.length >= 2 ? coords : undefined;
 }
 
-function extractLegCoords(polyline?: GoogleLegPolyline): Array<[number, number]> | undefined {
-  if (!polyline) return undefined;
-  return parseGeoJsonCoords(polyline.geoJsonLinestring);
+function parseLegToCachedSegment(args: {
+  leg: GoogleRoutesLeg;
+  mode: TravelMode;
+  trafficAware?: boolean;
+  fromItemId?: string;
+  toItemId?: string;
+  fetchedAt: number;
+}): CachedSegmentRoute {
+  const { leg } = args;
+  if (typeof leg.distanceMeters !== 'number' || !Number.isFinite(leg.distanceMeters)) {
+    throw new GoogleRoutesError('Missing route distance');
+  }
+  return {
+    fromItemId: args.fromItemId,
+    toItemId: args.toItemId,
+    mode: args.mode,
+    trafficAware: normalizeTrafficAware(args.mode, args.trafficAware),
+    distanceMeters: leg.distanceMeters,
+    durationSeconds: parseGoogleDurationSeconds(leg.duration),
+    coords: parseGeoJsonCoords(leg.polyline?.geoJsonLinestring),
+    fetchedAt: args.fetchedAt,
+    provider: 'google_routes',
+  };
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {
@@ -207,7 +360,7 @@ async function parseErrorMessage(response: Response): Promise<string> {
     if (message && status) return `${status}: ${message}`;
     if (message) return message;
   } catch {
-    // Fall back to raw text.
+    // ignore
   }
   return text;
 }
@@ -226,37 +379,7 @@ export function formatGoogleRoutesError(error: unknown): string {
   return 'Routing request failed';
 }
 
-export async function computeDayTravelSegments(params: ComputeDayTravelSegmentsParams): Promise<TravelSegment[]> {
-  if (params.waypoints.length < 2) return [];
-
-  const apiKey = params.apiKey.trim();
-  if (!apiKey) {
-    throw new GoogleRoutesError('Google Maps Routes API key required');
-  }
-
-  const waypoints = params.waypoints;
-  const now = Date.now();
-  const body: Record<string, unknown> = {
-    origin: googleWaypoint(waypoints[0]),
-    destination: googleWaypoint(waypoints[waypoints.length - 1]),
-    travelMode: params.mode,
-    polylineEncoding: 'GEO_JSON_LINESTRING',
-    polylineQuality: 'OVERVIEW',
-  };
-
-  const middle = waypoints.slice(1, -1);
-  if (middle.length > 0) {
-    body.intermediates = middle.map(googleWaypoint);
-  }
-  if (params.languageCode) body.languageCode = params.languageCode;
-  if (params.regionCode) body.regionCode = params.regionCode;
-  if (params.mode === 'DRIVE' && params.trafficAware) {
-    body.routingPreference = 'TRAFFIC_AWARE';
-  }
-  if (params.mode === 'TRANSIT') {
-    body.departureTime = new Date(now).toISOString();
-  }
-
+async function requestRoutesApi(body: Record<string, unknown>, apiKey: string): Promise<GoogleComputeRoutesResponse> {
   const response = await queuedRequest(GOOGLE_ROUTES_QUEUE, GOOGLE_ROUTES_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -273,102 +396,346 @@ export async function computeDayTravelSegments(params: ComputeDayTravelSegmentsP
     throw new GoogleRoutesError(message, response.status, response.statusText);
   }
 
-  const payload = (await response.json()) as GoogleComputeRoutesResponse;
-  const legs = payload.routes?.[0]?.legs ?? [];
-  if (legs.length === 0) {
-    return [];
+  return response.json() as Promise<GoogleComputeRoutesResponse>;
+}
+
+function buildRoutesRequestBody(args: {
+  waypoints: Array<{ lat: number; lon: number }>;
+  mode: TravelMode;
+  trafficAware?: boolean;
+  nowMs: number;
+  languageCode?: string;
+  regionCode?: string;
+}) {
+  const body: Record<string, unknown> = {
+    origin: googleWaypoint(args.waypoints[0]),
+    destination: googleWaypoint(args.waypoints[args.waypoints.length - 1]),
+    travelMode: args.mode,
+    polylineEncoding: 'GEO_JSON_LINESTRING',
+    polylineQuality: 'OVERVIEW',
+  };
+  const middle = args.waypoints.slice(1, -1);
+  if (middle.length > 0) {
+    body.intermediates = middle.map(googleWaypoint);
+  }
+  if (args.languageCode) body.languageCode = args.languageCode;
+  if (args.regionCode) body.regionCode = args.regionCode;
+  if (args.mode === 'DRIVE' && normalizeTrafficAware(args.mode, args.trafficAware)) {
+    body.routingPreference = 'TRAFFIC_AWARE';
+  }
+  if (args.mode === 'TRANSIT') {
+    body.departureTime = new Date(args.nowMs).toISOString();
+  }
+  return body;
+}
+
+async function getCachedSegmentRouteByKey(key: string): Promise<CachedSegmentRoute | null> {
+  const entry = await idbGet<CachedSegmentRouteEntry>(IDB_STORES.routeCache, key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) return null;
+  return entry.value;
+}
+
+async function setCachedSegmentRouteByKey(key: string, value: CachedSegmentRoute, ttlMs: number): Promise<void> {
+  const entry: CachedSegmentRouteEntry = {
+    key,
+    expiresAt: value.fetchedAt + ttlMs,
+    value,
+  };
+  await idbSet(IDB_STORES.routeCache, key, entry);
+}
+
+export async function getCachedSegmentRoute(args: {
+  from: [number, number];
+  to: [number, number];
+  mode: TravelMode;
+  trafficAware?: boolean;
+  nowMs?: number;
+}): Promise<CachedSegmentRoute | null> {
+  const key = buildSegmentRouteCacheKey(args);
+  return getCachedSegmentRouteByKey(key);
+}
+
+export async function computeSegmentRoute(args: ComputeSegmentRouteParams): Promise<RouteSegmentComputationResult> {
+  const nowMs = Date.now();
+  const mode = args.mode;
+  const trafficAware = normalizeTrafficAware(mode, args.trafficAware);
+  const cacheKey = buildSegmentRouteCacheKey({
+    from: args.from,
+    to: args.to,
+    mode,
+    trafficAware,
+    nowMs,
+  });
+
+  if (!args.force) {
+    const cached = await getCachedSegmentRouteByKey(cacheKey);
+    if (cached) {
+      return { route: cached, fromCache: true };
+    }
   }
 
-  const expectedLegs = waypoints.length - 1;
+  const apiKey = args.apiKey.trim();
+  if (!apiKey) {
+    return { error: 'Google Maps Routes API key required', fromCache: false };
+  }
+
+  try {
+    const [fromLon, fromLat] = args.from;
+    const [toLon, toLat] = args.to;
+    const body = buildRoutesRequestBody({
+      waypoints: [
+        { lat: fromLat, lon: fromLon },
+        { lat: toLat, lon: toLon },
+      ],
+      mode,
+      trafficAware,
+      nowMs,
+      languageCode: args.languageCode,
+      regionCode: args.regionCode,
+    });
+    const payload = await requestRoutesApi(body, apiKey);
+    const leg = payload.routes?.[0]?.legs?.[0];
+    if (!leg) {
+      throw new GoogleRoutesError(mode === 'TRANSIT' ? 'Transit unavailable for this route' : 'No route found');
+    }
+    const route = parseLegToCachedSegment({
+      leg,
+      mode,
+      trafficAware,
+      fromItemId: args.fromItemId,
+      toItemId: args.toItemId,
+      fetchedAt: nowMs,
+    });
+    await setCachedSegmentRouteByKey(cacheKey, route, effectiveTtlMs(mode, args.ttlMs));
+    return { route, fromCache: false };
+  } catch (error) {
+    return { error: formatGoogleRoutesError(error), fromCache: false };
+  }
+}
+
+export async function computeDayRoutesSingleMode(params: ComputeDayRoutesSingleModeParams): Promise<TravelSegment[]> {
+  if (params.waypoints.length < 2) return [];
+
+  const apiKey = params.apiKey.trim();
+  if (!apiKey) throw new GoogleRoutesError('Google Maps Routes API key required');
+
+  const nowMs = Date.now();
+  const body = buildRoutesRequestBody({
+    waypoints: params.waypoints.map((waypoint) => ({ lat: waypoint.lat, lon: waypoint.lon })),
+    mode: params.mode,
+    trafficAware: params.trafficAware,
+    nowMs,
+    languageCode: params.languageCode,
+    regionCode: params.regionCode,
+  });
+
+  const payload = await requestRoutesApi(body, apiKey);
+  const legs = payload.routes?.[0]?.legs ?? [];
+  const expectedLegs = params.waypoints.length - 1;
+  if (legs.length === 0) {
+    throw new GoogleRoutesError(params.mode === 'TRANSIT' ? 'Transit unavailable for this route' : 'No route found');
+  }
   if (legs.length !== expectedLegs) {
     throw new GoogleRoutesError(`Unexpected route leg count (${legs.length}, expected ${expectedLegs})`);
   }
 
-  return legs.map((leg, index) => {
-    const fromWaypoint = waypoints[index];
-    const toWaypoint = waypoints[index + 1];
-    if (typeof leg.distanceMeters !== 'number' || !Number.isFinite(leg.distanceMeters)) {
-      throw new GoogleRoutesError(`Missing distance for leg ${index + 1}`);
-    }
-    const durationSeconds = parseGoogleDurationSeconds(leg.duration);
-    return {
+  const segments: TravelSegment[] = [];
+  for (let index = 0; index < legs.length; index += 1) {
+    const fromWaypoint = params.waypoints[index];
+    const toWaypoint = params.waypoints[index + 1];
+    const parsed = parseLegToCachedSegment({
+      leg: legs[index],
+      mode: params.mode,
+      trafficAware: params.trafficAware,
       fromItemId: fromWaypoint.itemId,
       toItemId: toWaypoint.itemId,
-      mode: params.mode,
+      fetchedAt: nowMs,
+    });
+
+    const travelSegment: TravelSegment = {
+      fromItemId: parsed.fromItemId ?? fromWaypoint.itemId,
+      toItemId: parsed.toItemId ?? toWaypoint.itemId,
+      mode: parsed.mode,
       provider: 'google_routes',
-      distanceMeters: leg.distanceMeters,
-      durationSeconds,
-      coords: extractLegCoords(leg.polyline),
-      fetchedAt: now,
-    } satisfies TravelSegment;
-  });
-}
+      distanceMeters: parsed.distanceMeters,
+      durationSeconds: parsed.durationSeconds,
+      coords: parsed.coords,
+      fetchedAt: parsed.fetchedAt,
+    };
+    segments.push(travelSegment);
 
-export async function getCachedDayTravelSegments(args: DayTravelCacheArgs): Promise<CachedDayTravelSegments | null> {
-  const cacheKey = buildDayTravelCacheKey(args);
-  const entry = await idbGet<DayTravelCacheEntry>(IDB_STORES.routeCache, cacheKey);
-  if (!entry) return null;
-  if (entry.expiresAt <= Date.now()) return null;
-  return {
-    cacheKey: entry.cacheKey,
-    segments: entry.segments,
-    fetchedAt: entry.fetchedAt,
-  };
-}
-
-async function setCachedDayTravelSegments(
-  args: DayTravelCacheArgs,
-  segments: TravelSegment[],
-  ttlMs = DEFAULT_ROUTE_CACHE_TTL_MS
-): Promise<CachedDayTravelSegments> {
-  const cacheKey = buildDayTravelCacheKey(args);
-  const fetchedAt = segments[0]?.fetchedAt ?? Date.now();
-  const entry: DayTravelCacheEntry = {
-    cacheKey,
-    segments,
-    fetchedAt,
-    expiresAt: fetchedAt + ttlMs,
-  };
-  await idbSet(IDB_STORES.routeCache, cacheKey, entry);
-  return {
-    cacheKey,
-    segments,
-    fetchedAt,
-  };
-}
-
-export async function computeDayTravelSegmentsWithCache(
-  args: DayTravelCacheArgs & ComputeDayTravelSegmentsParams & { ttlMs?: number; force?: boolean }
-): Promise<CachedDayTravelSegments> {
-  const cacheArgs: DayTravelCacheArgs = {
-    tripId: args.tripId,
-    dayId: args.dayId,
-    mode: args.mode,
-    trafficAware: args.trafficAware,
-    waypoints: args.waypoints,
-  };
-
-  if (!args.force) {
-    const cached = await getCachedDayTravelSegments(cacheArgs);
-    if (cached) return cached;
+    const cacheKey = buildSegmentRouteCacheKey({
+      from: [fromWaypoint.lon, fromWaypoint.lat],
+      to: [toWaypoint.lon, toWaypoint.lat],
+      mode: params.mode,
+      trafficAware: params.trafficAware,
+      nowMs,
+    });
+    await setCachedSegmentRouteByKey(
+      cacheKey,
+      parsed,
+      effectiveTtlMs(params.mode, params.ttlMs)
+    );
   }
 
-  const segments = await computeDayTravelSegments({
-    apiKey: args.apiKey,
-    mode: args.mode,
-    trafficAware: args.trafficAware,
-    waypoints: args.waypoints,
-    languageCode: args.languageCode,
-    regionCode: args.regionCode,
-  });
-  return setCachedDayTravelSegments(cacheArgs, segments, args.ttlMs);
+  return segments;
+}
+
+function itemHasLocation(item: Item): item is Item & { location: NonNullable<Item['location']> } {
+  return !!item.location;
+}
+
+export function buildDayLocatedWaypoints(day: Day): GoogleRouteWaypoint[] {
+  return day.items
+    .filter(itemHasLocation)
+    .map((item) => ({
+      itemId: item.id,
+      lat: item.location.lat,
+      lon: item.location.lon,
+    }));
+}
+
+export function buildAdjacentLocatedPairsForDay(day: Day, tripTravelDefaults?: TravelDefaults): AdjacentLocatedPair[] {
+  const pairs: AdjacentLocatedPair[] = [];
+  for (let index = 0; index < day.items.length - 1; index += 1) {
+    const fromItem = day.items[index];
+    const toItem = day.items[index + 1];
+    if (!fromItem.location || !toItem.location) continue;
+    const effective = getEffectiveTravelForEdge(day, fromItem.id, toItem.id, tripTravelDefaults);
+    pairs.push({
+      edgeKey: buildTravelSegmentPairKey(fromItem.id, toItem.id),
+      fromItemId: fromItem.id,
+      toItemId: toItem.id,
+      from: [fromItem.location.lon, fromItem.location.lat],
+      to: [toItem.location.lon, toItem.location.lat],
+      mode: effective.mode,
+      trafficAware: normalizeTrafficAware(effective.mode, effective.trafficAware),
+    });
+  }
+  return pairs;
+}
+
+export async function computeTravelForDay(params: ComputeTravelForDayParams): Promise<TravelForDayResult> {
+  const normalizedDay = normalizeTravelOverrides(params.day);
+  const dayDefaults = resolveDayTravelDefaults(normalizedDay, params.tripTravelDefaults);
+  const pairs = buildAdjacentLocatedPairsForDay(normalizedDay, params.tripTravelDefaults);
+  const result: TravelForDayResult = {
+    computedCount: 0,
+    cachedCount: 0,
+    failedCount: 0,
+    segmentsByEdge: {},
+    errorsByEdge: {},
+  };
+  if (pairs.length === 0) return result;
+
+  const missingPairs: AdjacentLocatedPair[] = [];
+
+  if (!params.force) {
+    for (const pair of pairs) {
+      const cached = await getCachedSegmentRoute({
+        from: pair.from,
+        to: pair.to,
+        mode: pair.mode,
+        trafficAware: pair.trafficAware,
+      });
+      if (cached) {
+        result.cachedCount += 1;
+        result.segmentsByEdge[pair.edgeKey] = cached;
+      } else {
+        missingPairs.push(pair);
+      }
+    }
+  } else {
+    missingPairs.push(...pairs);
+  }
+
+  if (missingPairs.length === 0) return result;
+
+  const defaultMode = dayDefaults.mode;
+  const defaultTrafficAware = normalizeTrafficAware(defaultMode, dayDefaults.trafficAware);
+
+  const missingDefaultPairs = missingPairs.filter(
+    (pair) => pair.mode === defaultMode && pair.trafficAware === defaultTrafficAware
+  );
+  const missingOverridePairs = missingPairs.filter(
+    (pair) => !(pair.mode === defaultMode && pair.trafficAware === defaultTrafficAware)
+  );
+
+  // Preferred fast path: one day-level call using the day default mode for all located waypoints.
+  if (missingDefaultPairs.length > 0) {
+    try {
+      const waypoints = buildDayLocatedWaypoints(normalizedDay);
+      if (waypoints.length >= 2) {
+        await computeDayRoutesSingleMode({
+          apiKey: params.apiKey,
+          mode: defaultMode,
+          trafficAware: defaultTrafficAware,
+          waypoints,
+          ttlMs: params.ttlMs,
+          force: true,
+          languageCode: params.languageCode,
+          regionCode: params.regionCode,
+        });
+        for (const pair of missingDefaultPairs) {
+          const cached = await getCachedSegmentRoute({
+            from: pair.from,
+            to: pair.to,
+            mode: pair.mode,
+            trafficAware: pair.trafficAware,
+          });
+          if (cached) {
+            result.computedCount += 1;
+            result.segmentsByEdge[pair.edgeKey] = cached;
+          } else {
+            result.failedCount += 1;
+            result.errorsByEdge[pair.edgeKey] = 'Route computed but segment cache was not available';
+          }
+        }
+      }
+    } catch (error) {
+      const message = formatGoogleRoutesError(error);
+      for (const pair of missingDefaultPairs) {
+        result.failedCount += 1;
+        result.errorsByEdge[pair.edgeKey] = message;
+      }
+    }
+  }
+
+  for (const pair of missingOverridePairs) {
+    const segmentResult = await computeSegmentRoute({
+      apiKey: params.apiKey,
+      from: pair.from,
+      to: pair.to,
+      mode: pair.mode,
+      trafficAware: pair.trafficAware,
+      fromItemId: pair.fromItemId,
+      toItemId: pair.toItemId,
+      ttlMs: params.ttlMs,
+      force: params.force,
+      languageCode: params.languageCode,
+      regionCode: params.regionCode,
+    });
+    if (segmentResult.route) {
+      result.segmentsByEdge[pair.edgeKey] = segmentResult.route;
+      if (segmentResult.fromCache) result.cachedCount += 1;
+      else result.computedCount += 1;
+    } else {
+      result.failedCount += 1;
+      result.errorsByEdge[pair.edgeKey] = segmentResult.error ?? 'Routing request failed';
+    }
+  }
+
+  return result;
 }
 
 export function mapSegmentsByPair(segments: TravelSegment[]): Record<string, TravelSegment> {
-  const entries = segments.map((segment) => [buildTravelSegmentPairKey(segment.fromItemId, segment.toItemId), segment] as const);
-  return Object.fromEntries(entries);
+  return Object.fromEntries(
+    segments.map((segment) => [buildTravelSegmentPairKey(segment.fromItemId, segment.toItemId), segment] as const)
+  );
 }
 
 export async function clearRoutingCache(): Promise<void> {
   await idbClear(IDB_STORES.routeCache);
 }
+

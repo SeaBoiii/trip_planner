@@ -43,6 +43,7 @@ trip_planner/
   - inline travel rows (distance + duration)
   - Google Maps Platform Routes API (user-supplied browser key, stored locally only)
   - one `computeRoutes` call per day when using "Compute travel for this day"
+  - per-segment mode overrides (Auto / Walk / Drive / Transit), persisted per day edge
   - straight-line fallback always available
   - optional route polylines on map
 - Image attachments per item:
@@ -76,6 +77,7 @@ Important:
   - API restrictions: allow only `Routes API`
 - Enable billing and the Google Maps Platform `Routes API` in your Google Cloud project.
 - Routing is computed on-demand only (explicit "Compute travel for this day") and cached to reduce quota/cost usage.
+- Mixed-mode days (segment overrides) may trigger additional per-segment `computeRoutes` calls beyond the default day-level call.
 
 ## Attachments Storage
 
@@ -97,13 +99,16 @@ Important:
 
 - Main state is stored in `localStorage` under `trip_planner_v1`
 - Route cache and attachments are stored in IndexedDB
-- Current JSON schema version: `5`
+- Route cache entries are keyed per segment (coords + mode + traffic flag); transit uses a shorter cache TTL than walk/drive.
+- Current JSON schema version: `6`
 
 Migration coverage includes:
 
 - legacy `item.location` string -> `item.locationText`
 - legacy numeric `item.cost` -> `Money`
 - legacy `trip.currency` -> `trip.baseCurrency`
+- legacy `trip.defaultTravelMode` -> `trip.travelDefaults`
+- legacy `day.travelPreferences.modeOverridesBySegmentKey` -> `day.travelOverrides`
 - default participants/settings/routing/rates fields
 
 ## Tech Stack
@@ -125,6 +130,7 @@ Migration coverage includes:
 ## Notes / Limitations
 
 - Transit routing in Google Routes API is region/route-dependent; unavailable routes fall back to straight-line estimates plus deep links to Maps apps.
+- Segment mode overrides are keyed by adjacent item edges (`fromItemId->toItemId`) and stale overrides are pruned automatically after reordering.
 - If Google Routes requests fail with `401/403`, check API key billing, referrer restrictions, and API restrictions (Routes API).
 - Opening hours and map/place data come from OpenStreetMap-related sources and may be incomplete/outdated.
 - Large image libraries increase IndexedDB usage and ZIP export size.
