@@ -274,21 +274,23 @@ export function Itinerary({ trip, store }: ItineraryProps) {
     <div className="max-w-3xl mx-auto px-4 py-4">
       {/* Trip header */}
       <div className="flex items-start justify-between mb-4">
-        <div>
+        <div className="min-w-0">
           <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{trip.name}</h2>
           {(trip.startDate || trip.endDate) && (
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5 flex items-center gap-1">
-              <CalendarDays size={14} />
+            <div className="mt-0.5 grid grid-cols-[14px_minmax(0,1fr)] items-start gap-x-1">
+              <CalendarDays size={14} className="mt-0.5 text-gray-500 dark:text-gray-400" />
+              <p className="text-sm text-gray-500 dark:text-gray-400 leading-4 break-words">
               {trip.startDate}{trip.startDate && trip.endDate && ' → '}{trip.endDate}
-            </p>
+              </p>
+            </div>
           )}
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Total: {formatCurrency(tripTotal(trip.days), trip.baseCurrency)}
           </p>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 no-print">
-            <span className="text-xs text-gray-500 dark:text-gray-400 inline-flex items-center gap-1">
-              <Route size={12} /> Travel mode
-            </span>
+          <div className="mt-2 grid grid-cols-[14px_minmax(0,1fr)] items-start gap-x-1 no-print">
+            <Route size={14} className="mt-0.5 text-gray-500 dark:text-gray-400" />
+            <div className="min-w-0 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-gray-500 dark:text-gray-400">Travel mode</span>
             {(['WALK', 'DRIVE', 'TRANSIT'] as TravelMode[]).map((mode) => (
               <button
                 key={mode}
@@ -311,6 +313,7 @@ export function Itinerary({ trip, store }: ItineraryProps) {
                 {mode}
               </button>
             ))}
+            </div>
           </div>
         </div>
         <div className="flex gap-2 no-print">
