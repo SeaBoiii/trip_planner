@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { AppSettings, Trip, ThemePreference, TravelMode } from '@trip-planner/core';
 import {
   CURRENCIES,
   DEFAULT_NOMINATIM_ENDPOINT,
   clearRoutingCache,
   fetchExchangeRates,
-  getRoutingProviders,
 } from '@trip-planner/core';
 import { Button, Input, Select, Modal, TextArea, toast } from '@trip-planner/ui';
 import { Sun, Moon, Monitor, Info, Route, Coins } from 'lucide-react';
@@ -28,9 +27,9 @@ const themeOptions: { value: ThemePreference; label: string; icon: React.ReactNo
 ];
 
 const travelModeOptions: { value: TravelMode; label: string }[] = [
-  { value: 'walk', label: 'Walk' },
-  { value: 'drive', label: 'Drive' },
-  { value: 'transit', label: 'Transit' },
+  { value: 'WALK', label: 'Walk' },
+  { value: 'DRIVE', label: 'Drive' },
+  { value: 'TRANSIT', label: 'Transit' },
 ];
 
 export function TripSettings({
@@ -47,11 +46,11 @@ export function TripSettings({
   const [startDate, setStartDate] = useState(trip.startDate ?? '');
   const [endDate, setEndDate] = useState(trip.endDate ?? '');
   const [baseCurrency, setBaseCurrency] = useState(trip.baseCurrency);
-  const [defaultTravelMode, setDefaultTravelMode] = useState<TravelMode>(trip.defaultTravelMode ?? 'walk');
+  const [defaultTravelMode, setDefaultTravelMode] = useState<TravelMode>(trip.defaultTravelMode ?? 'WALK');
 
   const [endpoint, setEndpoint] = useState(settings.geocodingProviderEndpoint);
-  const [routingProviderId, setRoutingProviderId] = useState(settings.routing.providerId);
-  const [orsApiKey, setOrsApiKey] = useState(settings.routing.openrouteserviceApiKey ?? '');
+  const [googleApiKey, setGoogleApiKey] = useState(settings.routing.googleApiKey ?? '');
+  const [trafficAwareDriveRoutes, setTrafficAwareDriveRoutes] = useState(settings.routing.trafficAwareDriveRoutes);
   const [computeTravelLazily, setComputeTravelLazily] = useState(settings.routing.computeTravelLazily);
   const [showRoutesOnMapByDefault, setShowRoutesOnMapByDefault] = useState(settings.routing.showRoutesOnMapByDefault);
   const [routeCacheTtlHours, setRouteCacheTtlHours] = useState(String(Math.round(settings.routing.routeCacheTtlMs / (60 * 60 * 1000))));
@@ -60,19 +59,17 @@ export function TripSettings({
   const [useManualRatesOnly, setUseManualRatesOnly] = useState(!!settings.exchangeRates.useManualRatesOnly);
   const [ratesLoading, setRatesLoading] = useState(false);
 
-  const routingProviders = useMemo(() => getRoutingProviders(), []);
-
   useEffect(() => {
     if (!open) return;
     setName(trip.name);
     setStartDate(trip.startDate ?? '');
     setEndDate(trip.endDate ?? '');
     setBaseCurrency(trip.baseCurrency);
-    setDefaultTravelMode(trip.defaultTravelMode ?? 'walk');
+    setDefaultTravelMode(trip.defaultTravelMode ?? 'WALK');
 
     setEndpoint(settings.geocodingProviderEndpoint);
-    setRoutingProviderId(settings.routing.providerId);
-    setOrsApiKey(settings.routing.openrouteserviceApiKey ?? '');
+    setGoogleApiKey(settings.routing.googleApiKey ?? '');
+    setTrafficAwareDriveRoutes(settings.routing.trafficAwareDriveRoutes);
     setComputeTravelLazily(settings.routing.computeTravelLazily);
     setShowRoutesOnMapByDefault(settings.routing.showRoutesOnMapByDefault);
     setRouteCacheTtlHours(String(Math.max(1, Math.round(settings.routing.routeCacheTtlMs / (60 * 60 * 1000)))));
@@ -148,8 +145,9 @@ export function TripSettings({
     onUpdateSettings({
       geocodingProviderEndpoint: endpoint.trim() || DEFAULT_NOMINATIM_ENDPOINT,
       routing: {
-        providerId: routingProviderId,
-        openrouteserviceApiKey: orsApiKey,
+        providerId: 'google_routes',
+        googleApiKey,
+        trafficAwareDriveRoutes,
         computeTravelLazily,
         showRoutesOnMapByDefault,
         routeCacheTtlMs: Math.round(ttlHours * 60 * 60 * 1000),
@@ -213,20 +211,22 @@ export function TripSettings({
             <Route size={14} className="text-gray-500 dark:text-gray-400" />
             Routing
           </div>
-          <Select
-            label="Routing Provider"
-            value={routingProviderId}
-            onChange={(e) => setRoutingProviderId(e.target.value as AppSettings['routing']['providerId'])}
-            options={routingProviders.map((provider) => ({ value: provider.id, label: provider.label }))}
-          />
           <Input
-            label="openrouteservice API key (optional)"
-            value={orsApiKey}
-            onChange={(e) => setOrsApiKey(e.target.value)}
+            label="Google Maps API key (Routes API)"
+            value={googleApiKey}
+            onChange={(e) => setGoogleApiKey(e.target.value)}
             placeholder="Stored locally only"
             type="password"
           />
           <div className="grid grid-cols-1 gap-2 text-xs text-gray-600 dark:text-gray-400">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={trafficAwareDriveRoutes}
+                onChange={(e) => setTrafficAwareDriveRoutes(e.target.checked)}
+              />
+              Use traffic-aware routes (DRIVE only)
+            </label>
             <label className="inline-flex items-center gap-2">
               <input type="checkbox" checked={computeTravelLazily} onChange={(e) => setComputeTravelLazily(e.target.checked)} />
               Compute travel lazily (recommended)
@@ -250,7 +250,14 @@ export function TripSettings({
             </Button>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Public demo routing providers are rate limited. Use per-day/per-segment compute actions to avoid bulk requests.
+            Routing is computed only when you tap compute actions to avoid quota/cost spikes. The API key is stored locally in this browser.
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Because this app runs on GitHub Pages, protect the key with HTTP referrer restrictions:
+            {' '}
+            <code>https://seaboiii.github.io/trip_planner/*</code>
+            {' '}
+            and restrict allowed APIs to <strong>Routes API</strong>.
           </p>
         </div>
 
@@ -314,10 +321,10 @@ export function TripSettings({
         <div className="flex flex-col gap-2 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
           <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">About data</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Map/place data use OpenStreetMap. Search uses Nominatim, opening hours use Overpass, routing can use OSRM/Valhalla/openrouteservice.
+            Map/place data use OpenStreetMap. Search uses Nominatim, opening hours use Overpass, and travel routing uses Google Maps Platform Routes API (with your own restricted browser key).
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Public demo providers can be limited, missing data, or temporarily unavailable.
+            OpenStreetMap data and Google route availability can vary by region and may be incomplete for some transit routes.
           </p>
           <div className="flex flex-wrap gap-3 text-xs">
             <a

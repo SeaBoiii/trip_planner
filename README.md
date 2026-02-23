@@ -41,7 +41,8 @@ trip_planner/
 - Map view with pins, day filters, opening hours (best effort via Overpass/OSM)
 - Routing/travel segments between consecutive located items:
   - inline travel rows (distance + duration)
-  - provider-backed route compute (OSRM demo / Valhalla demo / openrouteservice key)
+  - Google Maps Platform Routes API (user-supplied browser key, stored locally only)
+  - one `computeRoutes` call per day when using "Compute travel for this day"
   - straight-line fallback always available
   - optional route polylines on map
 - Image attachments per item:
@@ -60,20 +61,21 @@ trip_planner/
 
 ## Public APIs / Fair-Use Notes
 
-This app uses public/community endpoints by default. Rate limiting and caching are implemented, but availability can vary.
+This app uses public/community endpoints plus Google Maps Platform (for routing). Rate limiting and caching are implemented, but availability can vary.
 
 - Geocoding: OpenStreetMap Nominatim (debounced + cached + 1 req/sec queue)
 - Opening hours lookup: Overpass API (cached + rate limited)
-- Routing (selectable):
-  - Valhalla demo (default)
-  - OSRM demo
-  - openrouteservice (user-supplied API key, stored locally only)
+- Routing: Google Maps Platform Routes API (`computeRoutes`) using a user-supplied browser API key
 - Exchange rates: Frankfurter API (no API key)
 
 Important:
 
-- GitHub Pages cannot store secrets. Any API key (e.g., openrouteservice) must be entered by the user in Settings and is stored locally only.
-- Public demo routing services should be used sparingly. The UI uses explicit "Compute" actions and caches results.
+- GitHub Pages cannot store secrets. The Google Maps browser key must be entered by the user in Settings and is stored locally only.
+- Restrict the key in Google Cloud with:
+  - HTTP referrer restriction: `https://seaboiii.github.io/trip_planner/*`
+  - API restrictions: allow only `Routes API`
+- Enable billing and the Google Maps Platform `Routes API` in your Google Cloud project.
+- Routing is computed on-demand only (explicit "Compute travel for this day") and cached to reduce quota/cost usage.
 
 ## Attachments Storage
 
@@ -95,7 +97,7 @@ Important:
 
 - Main state is stored in `localStorage` under `trip_planner_v1`
 - Route cache and attachments are stored in IndexedDB
-- Current JSON schema version: `4`
+- Current JSON schema version: `5`
 
 Migration coverage includes:
 
@@ -122,8 +124,9 @@ Migration coverage includes:
 
 ## Notes / Limitations
 
-- Transit routing is provider-dependent. If unavailable, transit rows fall back to straight-line estimates plus deep links to Maps apps.
-- Opening hours and map/routing data come from OSM-related sources and may be incomplete/outdated.
+- Transit routing in Google Routes API is region/route-dependent; unavailable routes fall back to straight-line estimates plus deep links to Maps apps.
+- If Google Routes requests fail with `401/403`, check API key billing, referrer restrictions, and API restrictions (Routes API).
+- Opening hours and map/place data come from OpenStreetMap-related sources and may be incomplete/outdated.
 - Large image libraries increase IndexedDB usage and ZIP export size.
 
 ## License

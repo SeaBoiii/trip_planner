@@ -1,11 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { AppSettings, Item, RouteResult, TravelMode, Trip } from '@trip-planner/core';
+import type { AppSettings, Item, TravelMode, TravelSegment, Trip } from '@trip-planner/core';
 import { EmptyState, Button } from '@trip-planner/ui';
 import { MapContainer, TileLayer, CircleMarker, Polyline, useMap } from 'react-leaflet';
 import { latLngBounds } from 'leaflet';
 import { CalendarDays, ExternalLink, MapPin, Route, Loader2 } from 'lucide-react';
 import { getItemLocationLabel, getOpenStreetMapViewUrl } from '../lib/location';
-import { computeTravelSegment, getCachedRouteByArgs, routeGeometryToLatLngs } from '@trip-planner/core';
+import {
+  buildTravelSegmentPairKey,
+  computeDayTravelSegmentsWithCache,
+  formatGoogleRoutesError,
+  getCachedDayTravelSegments,
+} from '@trip-planner/core';
 
 interface MapViewProps {
   trip: Trip;
@@ -30,6 +35,11 @@ interface RoutePair {
   dayId: string;
   fromItem: Item;
   toItem: Item;
+}
+
+interface RoutableDay {
+  dayId: string;
+  waypoints: Array<{ itemId: string; lat: number; lon: number }>;
 }
 
 function collectPinnedItems(trip: Trip): PinnedItem[] {
@@ -70,6 +80,22 @@ function collectRoutePairs(trip: Trip, dayFilter: DayFilter): RoutePair[] {
   return pairs;
 }
 
+function collectRoutableDays(trip: Trip, dayFilter: DayFilter): RoutableDay[] {
+  return trip.days
+    .filter((day) => dayFilter === 'all' || day.id === dayFilter)
+    .map((day) => ({
+      dayId: day.id,
+      waypoints: day.items
+        .filter((item): item is Item & { location: NonNullable<Item['location']> } => !!item.location)
+        .map((item) => ({
+          itemId: item.id,
+          lat: item.location.lat,
+          lon: item.location.lon,
+        })),
+    }))
+    .filter((entry) => entry.waypoints.length >= 2);
+}
+
 function FitMapToPins({ pins }: { pins: PinnedItem[] }) {
   const map = useMap();
 
@@ -95,15 +121,22 @@ export function MapView({ trip, settings, onOpenItinerary }: MapViewProps) {
   const [dayFilter, setDayFilter] = useState<DayFilter>('all');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showRoutes, setShowRoutes] = useState(false);
-  const [routeSegments, setRouteSegments] = useState<Record<string, RouteResult | null>>({});
+  const [routeSegments, setRouteSegments] = useState<Record<string, TravelSegment>>({});
   const [routesLoading, setRoutesLoading] = useState(false);
+  const [routesError, setRoutesError] = useState<string | null>(null);
 
   useEffect(() => {
     setDayFilter('all');
     setSelectedKey(null);
     setShowRoutes(settings.routing.showRoutesOnMapByDefault);
     setRouteSegments({});
+    setRoutesError(null);
   }, [trip.id]);
+
+  useEffect(() => {
+    setRouteSegments({});
+    setRoutesError(null);
+  }, [dayFilter, trip.id, trip.defaultTravelMode, settings.routing.trafficAwareDriveRoutes]);
 
   const allPins = useMemo(() => collectPinnedItems(trip), [trip]);
   const visiblePins = useMemo(
@@ -111,7 +144,9 @@ export function MapView({ trip, settings, onOpenItinerary }: MapViewProps) {
     [allPins, dayFilter]
   );
   const routePairs = useMemo(() => collectRoutePairs(trip, dayFilter), [trip, dayFilter]);
-  const activeTravelMode: TravelMode = trip.defaultTravelMode ?? 'walk';
+  const routableDays = useMemo(() => collectRoutableDays(trip, dayFilter), [trip, dayFilter]);
+  const activeTravelMode: TravelMode = trip.defaultTravelMode ?? 'WALK';
+  const trafficAware = activeTravelMode === 'DRIVE' && settings.routing.trafficAwareDriveRoutes;
 
   useEffect(() => {
     if (!selectedKey) return;
@@ -121,54 +156,56 @@ export function MapView({ trip, settings, onOpenItinerary }: MapViewProps) {
   }, [selectedKey, visiblePins]);
 
   useEffect(() => {
-    if (!showRoutes || routePairs.length === 0) return;
+    if (!showRoutes || routableDays.length === 0) return;
     let cancelled = false;
-    const providerId = settings.routing.providerId;
-    const mode = activeTravelMode;
-
-    Promise.all(
-      routePairs.map(async (pair) => {
-        if (!pair.fromItem.location || !pair.toItem.location) return [pair.key, null] as const;
-        const cached = await getCachedRouteByArgs({
-          providerId,
-          mode,
-          from: [pair.fromItem.location.lon, pair.fromItem.location.lat],
-          to: [pair.toItem.location.lon, pair.toItem.location.lat],
-        });
-        return [pair.key, cached] as const;
-      })
-    ).then((entries) => {
+    const loadCached = async () => {
+      const merged: Record<string, TravelSegment> = {};
+      for (const routeDay of routableDays) {
+        const cached = await getCachedDayTravelSegments({
+          tripId: trip.id,
+          dayId: routeDay.dayId,
+          mode: activeTravelMode,
+          trafficAware,
+          waypoints: routeDay.waypoints,
+        }).catch(() => null);
+        if (!cached) continue;
+        for (const segment of cached.segments) {
+          merged[`${routeDay.dayId}:${buildTravelSegmentPairKey(segment.fromItemId, segment.toItemId)}`] = segment;
+        }
+      }
       if (cancelled) return;
-      setRouteSegments((prev) => ({
-        ...prev,
-        ...Object.fromEntries(entries),
-      }));
-    }).catch(() => {
-      // Ignore cache peek failures.
-    });
+      setRouteSegments((prev) => ({ ...prev, ...merged }));
+    };
+
+    void loadCached();
 
     return () => {
       cancelled = true;
     };
-  }, [showRoutes, routePairs, settings.routing.providerId, activeTravelMode]);
+  }, [showRoutes, routableDays, trip.id, activeTravelMode, trafficAware]);
 
   const computeVisibleRoutes = async () => {
     setRoutesLoading(true);
+    setRoutesError(null);
     try {
-      for (const pair of routePairs) {
-        if (!pair.fromItem.location || !pair.toItem.location) continue;
-        const computed = await computeTravelSegment({
-          providerId: settings.routing.providerId,
+      for (const routeDay of routableDays) {
+        const result = await computeDayTravelSegmentsWithCache({
+          tripId: trip.id,
+          dayId: routeDay.dayId,
+          apiKey: settings.routing.googleApiKey ?? '',
           mode: activeTravelMode,
-          from: [pair.fromItem.location.lon, pair.fromItem.location.lat],
-          to: [pair.toItem.location.lon, pair.toItem.location.lat],
-          apiKey: settings.routing.openrouteserviceApiKey,
+          trafficAware,
+          waypoints: routeDay.waypoints,
           ttlMs: settings.routing.routeCacheTtlMs,
         });
-        if (computed.route) {
-          setRouteSegments((prev) => ({ ...prev, [pair.key]: computed.route ?? null }));
+        const entries: Record<string, TravelSegment> = {};
+        for (const segment of result.segments) {
+          entries[`${routeDay.dayId}:${buildTravelSegmentPairKey(segment.fromItemId, segment.toItemId)}`] = segment;
         }
+        setRouteSegments((prev) => ({ ...prev, ...entries }));
       }
+    } catch (error) {
+      setRoutesError(formatGoogleRoutesError(error));
     } finally {
       setRoutesLoading(false);
     }
@@ -234,10 +271,15 @@ export function MapView({ trip, settings, onOpenItinerary }: MapViewProps) {
           </label>
           {showRoutes && routePairs.length > 0 && (
             <Button type="button" size="sm" variant="secondary" onClick={() => { void computeVisibleRoutes(); }} disabled={routesLoading}>
-              {routesLoading ? <><Loader2 size={12} className="animate-spin" /> Computing</> : 'Compute visible routes'}
+              {routesLoading ? <><Loader2 size={12} className="animate-spin" /> Computing</> : (dayFilter === 'all' ? 'Compute routes (visible days)' : 'Compute travel for this day')}
             </Button>
           )}
         </div>
+        {routesError && (
+          <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+            {routesError}
+          </p>
+        )}
       </div>
 
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -300,8 +342,8 @@ export function MapView({ trip, settings, onOpenItinerary }: MapViewProps) {
                 />
                 <FitMapToPins pins={visiblePins} />
                 {showRoutes && routePairs.map((pair) => {
-                  const route = routeSegments[pair.key];
-                  const latLngs = route ? routeGeometryToLatLngs(route) : [];
+                  const route = routeSegments[`${pair.dayId}:${buildTravelSegmentPairKey(pair.fromItem.id, pair.toItem.id)}`];
+                  const latLngs = route?.coords ?? [];
                   if (latLngs.length < 2) return null;
                   return (
                     <Polyline

@@ -8,7 +8,7 @@ export function createNewTrip(name: string, baseCurrency = 'SGD'): Trip {
     name,
     baseCurrency,
     participants: [],
-    defaultTravelMode: 'walk',
+    defaultTravelMode: 'WALK',
     days: [],
     createdAt: now,
     updatedAt: now,

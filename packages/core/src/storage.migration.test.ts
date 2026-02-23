@@ -46,13 +46,14 @@ describe('storage migration', () => {
     expect(trip.baseCurrency).toBe('EUR');
     expect('currency' in trip).toBe(false);
     expect(trip.participants).toEqual([]);
-    expect(trip.defaultTravelMode).toBe('walk');
+    expect(trip.defaultTravelMode).toBe('WALK');
 
     expect(item.locationText).toBe('Paris');
     expect(item.location).toBeUndefined();
     expect(item.cost).toEqual({ amount: 12.5, currency: 'EUR' });
 
-    expect(migrated.settings.routing.providerId).toBeDefined();
+    expect(migrated.settings.routing.providerId).toBe('google_routes');
+    expect(migrated.settings.routing.googleApiKey).toBeDefined();
     expect(migrated.settings.exchangeRates.provider).toBe('frankfurter');
   });
 });

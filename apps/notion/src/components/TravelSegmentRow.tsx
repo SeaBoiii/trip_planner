@@ -1,15 +1,18 @@
 import React from 'react';
-import type { TravelMode, TravelSegmentComputation } from '@trip-planner/core';
+import type { TravelMode, TravelSegment } from '@trip-planner/core';
 import { Button } from '@trip-planner/ui';
 import { Loader2, Route, Navigation } from 'lucide-react';
 
 interface TravelSegmentRowProps {
   mode: TravelMode;
   status: 'idle' | 'loading' | 'done';
-  data?: TravelSegmentComputation;
-  onCompute: () => void;
-  onRetry: () => void;
-  transitLinks?: { google: string; apple: string };
+  segment?: TravelSegment;
+  fallbackDistanceMeters: number;
+  fallbackDurationSeconds: number;
+  error?: string;
+  onCompute?: () => void;
+  onRetry?: () => void;
+  mapsLinks?: { google: string; appleTransit?: string };
 }
 
 function formatDistance(distanceMeters: number) {
@@ -30,14 +33,24 @@ function formatDuration(durationSeconds: number) {
 }
 
 function modeLabel(mode: TravelMode) {
-  if (mode === 'walk') return 'Walk';
-  if (mode === 'drive') return 'Drive';
+  if (mode === 'WALK') return 'Walk';
+  if (mode === 'DRIVE') return 'Drive';
   return 'Transit';
 }
 
-export function TravelSegmentRow({ mode, status, data, onCompute, onRetry, transitLinks }: TravelSegmentRowProps) {
-  const distance = data?.route?.distanceMeters ?? data?.fallbackDistanceMeters;
-  const duration = data?.route?.durationSeconds ?? data?.fallbackDurationSeconds;
+export function TravelSegmentRow({
+  mode,
+  status,
+  segment,
+  fallbackDistanceMeters,
+  fallbackDurationSeconds,
+  error,
+  onCompute,
+  onRetry,
+  mapsLinks,
+}: TravelSegmentRowProps) {
+  const distance = segment?.distanceMeters ?? fallbackDistanceMeters;
+  const duration = segment?.durationSeconds ?? fallbackDurationSeconds;
 
   return (
     <div className="mx-3 py-2 px-2 rounded-md border border-dashed border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/30 no-print">
@@ -53,12 +66,12 @@ export function TravelSegmentRow({ mode, status, data, onCompute, onRetry, trans
           {duration != null && (
             <span className="text-gray-600 dark:text-gray-400">{formatDuration(duration)}</span>
           )}
-          {!data?.route && data?.fallbackDistanceMeters != null && (
+          {!segment && (
             <span className="text-gray-400 dark:text-gray-500">(straight-line fallback)</span>
           )}
         </div>
 
-        {status === 'idle' && (
+        {status === 'idle' && onCompute && (
           <Button type="button" size="sm" variant="ghost" onClick={onCompute}>
             Compute
           </Button>
@@ -69,39 +82,41 @@ export function TravelSegmentRow({ mode, status, data, onCompute, onRetry, trans
             Computing...
           </span>
         )}
-        {status === 'done' && data?.error && (
+        {status === 'done' && error && onRetry && (
           <Button type="button" size="sm" variant="ghost" onClick={onRetry}>
             Try again
           </Button>
         )}
       </div>
 
-      {status === 'done' && data?.error && (
+      {status === 'done' && error && (
         <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
-          Route API unavailable: {data.error}
+          Route API unavailable: {error}
         </p>
       )}
 
-      {mode === 'transit' && transitLinks && (
+      {mapsLinks && (
         <div className="mt-2 flex flex-wrap gap-2 text-xs">
           <a
-            href={transitLinks.google}
+            href={mapsLinks.google}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700"
           >
             <Navigation size={11} />
-            Open transit in Google Maps
+            Open in Google Maps
           </a>
-          <a
-            href={transitLinks.apple}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700"
-          >
-            <Navigation size={11} />
-            Apple Maps
-          </a>
+          {mode === 'TRANSIT' && mapsLinks.appleTransit && (
+            <a
+              href={mapsLinks.appleTransit}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700"
+            >
+              <Navigation size={11} />
+              Apple Maps
+            </a>
+          )}
         </div>
       )}
     </div>

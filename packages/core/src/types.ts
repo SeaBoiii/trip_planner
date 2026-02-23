@@ -50,8 +50,19 @@ export interface Participant {
   name: string;
 }
 
-export type TravelMode = 'walk' | 'drive' | 'transit';
-export type RoutingProviderId = 'osrm_demo' | 'valhalla_demo' | 'openrouteservice';
+export type TravelMode = 'WALK' | 'DRIVE' | 'TRANSIT';
+export type RoutingProviderId = 'google_routes';
+
+export interface TravelSegment {
+  fromItemId: string;
+  toItemId: string;
+  mode: TravelMode;
+  provider: 'google_routes';
+  distanceMeters: number;
+  durationSeconds: number;
+  coords?: Array<[number, number]>; // [lat, lon]
+  fetchedAt: number;
+}
 
 export interface DayTravelPreferences {
   modeOverridesBySegmentKey?: Record<string, TravelMode>;
@@ -156,7 +167,8 @@ export interface ExchangeRatesState {
 
 export interface RoutingSettings {
   providerId: RoutingProviderId;
-  openrouteserviceApiKey?: string;
+  googleApiKey?: string;
+  trafficAwareDriveRoutes: boolean;
   computeTravelLazily: boolean;
   showRoutesOnMapByDefault: boolean;
   routeCacheTtlMs: number;

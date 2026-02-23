@@ -11,7 +11,7 @@ import { builtInTemplates } from './templates';
 import { DEFAULT_NOMINATIM_ENDPOINT } from './services/geocoding';
 
 const STORAGE_KEY = 'trip_planner_v1';
-const CURRENT_VERSION = 4;
+const CURRENT_VERSION = 5;
 const DEFAULT_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type Migration = (data: unknown) => unknown;
@@ -21,13 +21,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isTravelMode(value: unknown): value is TravelMode {
-  return value === 'walk' || value === 'drive' || value === 'transit';
+  return value === 'WALK' || value === 'DRIVE' || value === 'TRANSIT';
+}
+
+function normalizeTravelMode(value: unknown, fallback: TravelMode = 'WALK'): TravelMode {
+  if (value === 'WALK' || value === 'DRIVE' || value === 'TRANSIT') return value;
+  if (value === 'walk') return 'WALK';
+  if (value === 'drive') return 'DRIVE';
+  if (value === 'transit') return 'TRANSIT';
+  return fallback;
 }
 
 function defaultRoutingSettings(): RoutingSettings {
   return {
-    providerId: 'valhalla_demo',
-    openrouteserviceApiKey: '',
+    providerId: 'google_routes',
+    googleApiKey: '',
+    trafficAwareDriveRoutes: false,
     computeTravelLazily: true,
     showRoutesOnMapByDefault: false,
     routeCacheTtlMs: DEFAULT_ROUTE_CACHE_TTL_MS,
@@ -56,14 +65,16 @@ export function defaultSettings(): AppSettings {
 function normalizeRoutingSettings(value: unknown): RoutingSettings {
   const defaults = defaultRoutingSettings();
   if (!isRecord(value)) return defaults;
-  const providerId =
-    value.providerId === 'osrm_demo' || value.providerId === 'valhalla_demo' || value.providerId === 'openrouteservice'
-      ? value.providerId
-      : defaults.providerId;
   return {
-    providerId,
-    openrouteserviceApiKey:
-      typeof value.openrouteserviceApiKey === 'string' ? value.openrouteserviceApiKey : defaults.openrouteserviceApiKey,
+    providerId: 'google_routes',
+    googleApiKey:
+      typeof value.googleApiKey === 'string'
+        ? value.googleApiKey
+        : defaults.googleApiKey,
+    trafficAwareDriveRoutes:
+      typeof value.trafficAwareDriveRoutes === 'boolean'
+        ? value.trafficAwareDriveRoutes
+        : defaults.trafficAwareDriveRoutes,
     computeTravelLazily:
       typeof value.computeTravelLazily === 'boolean' ? value.computeTravelLazily : defaults.computeTravelLazily,
     showRoutesOnMapByDefault:
@@ -255,7 +266,7 @@ function normalizeTripCollection(value: unknown): unknown {
       ...trip,
       baseCurrency,
       participants,
-      defaultTravelMode: isTravelMode(trip.defaultTravelMode) ? trip.defaultTravelMode : 'walk',
+      defaultTravelMode: normalizeTravelMode(trip.defaultTravelMode, 'WALK'),
       days: Array.isArray(trip.days)
         ? trip.days.map((day) => {
             if (!isRecord(day)) return day;
@@ -263,7 +274,10 @@ function normalizeTripCollection(value: unknown): unknown {
               ? {
                   modeOverridesBySegmentKey: isRecord(day.travelPreferences.modeOverridesBySegmentKey)
                     ? Object.fromEntries(
-                        Object.entries(day.travelPreferences.modeOverridesBySegmentKey).filter(([, mode]) => isTravelMode(mode))
+                        Object.entries(day.travelPreferences.modeOverridesBySegmentKey).map(([segmentKey, mode]) => [
+                          segmentKey,
+                          normalizeTravelMode(mode, 'WALK'),
+                        ])
                       )
                     : undefined,
                 }
@@ -340,6 +354,15 @@ const migrations: Record<number, Migration> = {
     };
   },
   3: (data: unknown) => {
+    if (!isRecord(data)) return data;
+    return {
+      ...data,
+      trips: normalizeTripCollection(data.trips),
+      templates: normalizeTemplateCollection(data.templates),
+      settings: normalizeSettings(data.settings),
+    };
+  },
+  4: (data: unknown) => {
     if (!isRecord(data)) return data;
     return {
       ...data,

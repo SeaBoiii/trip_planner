@@ -1,16 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { Trip, Day, Item } from '@trip-planner/core';
 import {
   buildAppleTransitLink,
-  buildGoogleTransitLink,
-  computeTravelSegment,
+  buildDayTravelCacheKey,
+  buildGoogleDirectionsLink,
+  buildTravelSegmentPairKey,
+  computeDayTravelSegmentsWithCache,
+  formatGoogleRoutesError,
   formatCurrency,
   dayTotal,
   estimateTravelDurationSeconds,
+  getCachedDayTravelSegments,
   haversineDistanceMeters,
+  mapSegmentsByPair,
   tripTotal,
   type TravelMode,
-  type TravelSegmentComputation,
+  type TravelSegment,
 } from '@trip-planner/core';
 import { Button, Input, Modal, ConfirmDialog, EmptyState, toast } from '@trip-planner/ui';
 import { Plus, Trash2, ChevronDown, ChevronRight, Settings, CalendarDays, ArrowUpDown, Check, ArrowRightLeft, Route } from 'lucide-react';
@@ -28,6 +33,12 @@ interface ItineraryProps {
   store: ReturnType<typeof import('@trip-planner/core').useTripStore>;
 }
 
+type DayTravelState = {
+  status: 'idle' | 'loading' | 'done';
+  segmentsByPair: Record<string, TravelSegment>;
+  error?: string;
+};
+
 export function Itinerary({ trip, store }: ItineraryProps) {
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set(trip.days.map((d) => d.id)));
   const [showAddDay, setShowAddDay] = useState(false);
@@ -38,7 +49,7 @@ export function Itinerary({ trip, store }: ItineraryProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [reorderMode, setReorderMode] = useState(false);
   const [moveTarget, setMoveTarget] = useState<{ dayId: string; item: Item } | null>(null);
-  const [travelSegments, setTravelSegments] = useState<Record<string, { status: 'idle' | 'loading' | 'done'; data?: TravelSegmentComputation }>>({});
+  const [dayTravelStates, setDayTravelStates] = useState<Record<string, DayTravelState>>({});
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -120,52 +131,127 @@ export function Itinerary({ trip, store }: ItineraryProps) {
     setMoveTarget(null);
   };
 
-  const activeTravelMode: TravelMode = trip.defaultTravelMode ?? 'walk';
+  const activeTravelMode: TravelMode = trip.defaultTravelMode ?? 'WALK';
   const routingSettings = store.state.settings.routing;
+  const trafficAware = activeTravelMode === 'DRIVE' && routingSettings.trafficAwareDriveRoutes;
 
-  const getTravelSegmentKey = (dayId: string, fromItemId: string, toItemId: string) =>
-    `${dayId}:${fromItemId}:${toItemId}:${routingSettings.providerId}:${activeTravelMode}`;
+  const buildWaypointsForDay = (day: Day) =>
+    day.items
+      .filter((item): item is Item & { location: NonNullable<Item['location']> } => !!item.location)
+      .map((item) => ({
+        itemId: item.id,
+        lat: item.location.lat,
+        lon: item.location.lon,
+      }));
 
-  const computeSegment = async (dayId: string, fromItem: Item, toItem: Item, force = false) => {
-    if (!fromItem.location || !toItem.location) return;
-    const key = getTravelSegmentKey(dayId, fromItem.id, toItem.id);
-    setTravelSegments((prev) => ({
-      ...prev,
-      [key]: { ...(prev[key] ?? {}), status: 'loading' },
-    }));
-
-    const result = await computeTravelSegment({
-      providerId: routingSettings.providerId,
-      from: [fromItem.location.lon, fromItem.location.lat],
-      to: [toItem.location.lon, toItem.location.lat],
+  const getDayTravelKey = (day: Day) =>
+    buildDayTravelCacheKey({
+      tripId: trip.id,
+      dayId: day.id,
       mode: activeTravelMode,
-      apiKey: routingSettings.openrouteserviceApiKey,
-      ttlMs: routingSettings.routeCacheTtlMs,
-      force,
+      trafficAware,
+      waypoints: buildWaypointsForDay(day),
     });
 
-    setTravelSegments((prev) => ({
-      ...prev,
-      [key]: { status: 'done', data: result },
-    }));
+  const loadCachedTravelForDay = async (day: Day) => {
+    const waypoints = buildWaypointsForDay(day);
+    if (waypoints.length < 2) return;
+    const cacheKey = buildDayTravelCacheKey({
+      tripId: trip.id,
+      dayId: day.id,
+      mode: activeTravelMode,
+      trafficAware,
+      waypoints,
+    });
+    const existing = dayTravelStates[cacheKey];
+    if (existing?.status === 'loading' || existing?.status === 'done') return;
+    try {
+      const cached = await getCachedDayTravelSegments({
+        tripId: trip.id,
+        dayId: day.id,
+        mode: activeTravelMode,
+        trafficAware,
+        waypoints,
+      });
+      if (!cached) return;
+      setDayTravelStates((prev) => ({
+        ...prev,
+        [cacheKey]: {
+          status: 'done',
+          segmentsByPair: mapSegmentsByPair(cached.segments),
+        },
+      }));
+    } catch {
+      // Ignore cache peek failures and keep fallback-only UI.
+    }
   };
 
-  const computeDayTravel = async (day: Day) => {
-    const pairs: Array<[Item, Item]> = [];
-    for (let index = 0; index < day.items.length - 1; index += 1) {
-      const fromItem = day.items[index];
-      const toItem = day.items[index + 1];
-      if (fromItem.location && toItem.location) {
-        pairs.push([fromItem, toItem]);
-      }
-    }
-    for (const [fromItem, toItem] of pairs) {
-      await computeSegment(day.id, fromItem, toItem);
-    }
-    if (pairs.length > 0) {
-      toast(`Computed travel for ${pairs.length} segment${pairs.length === 1 ? '' : 's'}`);
+  const computeDayTravel = async (day: Day, force = false) => {
+    const waypoints = buildWaypointsForDay(day);
+    if (waypoints.length < 2) return;
+    const cacheKey = buildDayTravelCacheKey({
+      tripId: trip.id,
+      dayId: day.id,
+      mode: activeTravelMode,
+      trafficAware,
+      waypoints,
+    });
+
+    setDayTravelStates((prev) => ({
+      ...prev,
+      [cacheKey]: {
+        status: 'loading',
+        segmentsByPair: prev[cacheKey]?.segmentsByPair ?? {},
+      },
+    }));
+
+    try {
+      const result = await computeDayTravelSegmentsWithCache({
+        tripId: trip.id,
+        dayId: day.id,
+        apiKey: routingSettings.googleApiKey ?? '',
+        mode: activeTravelMode,
+        trafficAware,
+        waypoints,
+        ttlMs: routingSettings.routeCacheTtlMs,
+        force,
+      });
+      setDayTravelStates((prev) => ({
+        ...prev,
+        [cacheKey]: {
+          status: 'done',
+          segmentsByPair: mapSegmentsByPair(result.segments),
+        },
+      }));
+      toast(`Computed travel for ${result.segments.length} segment${result.segments.length === 1 ? '' : 's'}`);
+    } catch (error) {
+      const message = formatGoogleRoutesError(error);
+      setDayTravelStates((prev) => ({
+        ...prev,
+        [cacheKey]: {
+          status: 'done',
+          segmentsByPair: prev[cacheKey]?.segmentsByPair ?? {},
+          error: message,
+        },
+      }));
+      toast(message, 'error');
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      for (const day of trip.days) {
+        if (!expandedDays.has(day.id)) continue;
+        if (cancelled) return;
+        await loadCachedTravelForDay(day);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [trip.id, trip.days, activeTravelMode, trafficAware, expandedDays]);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-4">
@@ -186,7 +272,7 @@ export function Itinerary({ trip, store }: ItineraryProps) {
             <span className="text-xs text-gray-500 dark:text-gray-400 inline-flex items-center gap-1">
               <Route size={12} /> Travel mode
             </span>
-            {(['walk', 'drive', 'transit'] as TravelMode[]).map((mode) => (
+            {(['WALK', 'DRIVE', 'TRANSIT'] as TravelMode[]).map((mode) => (
               <button
                 key={mode}
                 type="button"
@@ -267,7 +353,7 @@ export function Itinerary({ trip, store }: ItineraryProps) {
                       className="px-2 py-1 rounded text-xs text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 no-print"
                       title="Compute travel for this day"
                     >
-                      Travel
+                      Compute travel for this day
                     </button>
                   )}
                   <button
@@ -285,17 +371,19 @@ export function Itinerary({ trip, store }: ItineraryProps) {
                 {/* Items */}
                 {isExpanded && (
                   <div className="border-t border-gray-100 dark:border-gray-700">
-                    <SortableContext items={day.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-                      {day.items.map((item, index) => {
-                        const nextItem = day.items[index + 1];
-                        const segmentKey =
-                          item.location && nextItem?.location
-                            ? getTravelSegmentKey(day.id, item.id, nextItem.id)
-                            : null;
-                        const segmentState = segmentKey ? travelSegments[segmentKey] : undefined;
+                      <SortableContext items={day.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+                        {day.items.map((item, index) => {
+                          const nextItem = day.items[index + 1];
+                          const dayTravelKey = getDayTravelKey(day);
+                          const dayTravelState = dayTravelStates[dayTravelKey];
+                          const segmentKey =
+                            item.location && nextItem?.location
+                              ? buildTravelSegmentPairKey(item.id, nextItem.id)
+                              : null;
+                          const segment = segmentKey ? dayTravelState?.segmentsByPair?.[segmentKey] : undefined;
 
-                        return (
-                          <React.Fragment key={item.id}>
+                          return (
+                            <React.Fragment key={item.id}>
                             <SortableItem
                               item={item}
                               dayId={day.id}
@@ -307,42 +395,43 @@ export function Itinerary({ trip, store }: ItineraryProps) {
                               onEdit={() => setEditingItem({ dayId: day.id, item })}
                               onDelete={() => setDeleteTarget({ type: 'item', dayId: day.id, itemId: item.id })}
                               onMoveTo={() => setMoveTarget({ dayId: day.id, item })}
-                            />
-                            {!reorderMode && item.location && nextItem?.location && (
-                              (() => {
-                                const fallbackDistance = haversineDistanceMeters(
-                                  [item.location.lon, item.location.lat],
-                                  [nextItem.location.lon, nextItem.location.lat]
-                                );
-                                const fallbackData = segmentState?.data ?? {
-                                  fallbackDistanceMeters: fallbackDistance,
-                                  fallbackDurationSeconds: estimateTravelDurationSeconds(fallbackDistance, activeTravelMode),
-                                };
-                                return (
+                              />
+                              {!reorderMode && item.location && nextItem?.location && (
+                                (() => {
+                                  const fallbackDistance = haversineDistanceMeters(
+                                    item.location.lat,
+                                    item.location.lon,
+                                    nextItem.location.lat,
+                                    nextItem.location.lon
+                                  );
+                                  return (
                               <TravelSegmentRow
                                 mode={activeTravelMode}
-                                status={segmentState?.status ?? 'idle'}
-                                data={fallbackData}
+                                status={dayTravelState?.status ?? 'idle'}
+                                segment={segment}
+                                fallbackDistanceMeters={fallbackDistance}
+                                fallbackDurationSeconds={estimateTravelDurationSeconds(fallbackDistance, activeTravelMode)}
+                                error={!segment ? dayTravelState?.error : undefined}
                                 onCompute={() => {
-                                  void computeSegment(day.id, item, nextItem);
+                                  void computeDayTravel(day);
                                 }}
                                 onRetry={() => {
-                                  void computeSegment(day.id, item, nextItem, true);
+                                  void computeDayTravel(day, true);
                                 }}
-                                transitLinks={
-                                  activeTravelMode === 'transit'
-                                    ? {
-                                        google: buildGoogleTransitLink(
+                                mapsLinks={{
+                                  google: buildGoogleDirectionsLink(
+                                    [item.location.lon, item.location.lat],
+                                    [nextItem.location.lon, nextItem.location.lat],
+                                    activeTravelMode
+                                  ),
+                                  appleTransit:
+                                    activeTravelMode === 'TRANSIT'
+                                      ? buildAppleTransitLink(
                                           [item.location.lon, item.location.lat],
                                           [nextItem.location.lon, nextItem.location.lat]
-                                        ),
-                                        apple: buildAppleTransitLink(
-                                          [item.location.lon, item.location.lat],
-                                          [nextItem.location.lon, nextItem.location.lat]
-                                        ),
-                                      }
-                                    : undefined
-                                }
+                                        )
+                                      : undefined,
+                                }}
                               />
                                 );
                               })()

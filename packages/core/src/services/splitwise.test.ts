@@ -21,7 +21,7 @@ function sampleTrip(): Trip {
       { id: 'b', name: 'Blair' },
       { id: 'c', name: 'Casey' },
     ],
-    defaultTravelMode: 'walk',
+    defaultTravelMode: 'WALK',
     days: [
       {
         id: 'd1',
